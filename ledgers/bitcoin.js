@@ -29,7 +29,7 @@ var timeout = 15
 var timeouts = 0
 var mempool = []
 var receivingInventory = false
-var filter
+var filter, pubnub
 
 // create peer group
 var PeerGroup = require('bitcoin-net').PeerGroup
@@ -198,8 +198,6 @@ function resetPeerConnection(){
 }
 
 function getTimer(max, cb){
-    var max = max
-    
     return setInterval(function(){
         timeouts += 1
         if (timeouts >= max) {
@@ -210,7 +208,6 @@ function getTimer(max, cb){
 }
 
 function publish() {
-   
     pubnub = new PubNub({
         publishKey : 'demo',
         subscribeKey : 'demo'
@@ -245,11 +242,11 @@ function publish() {
         channels: ['hello_world'] 
     });
 }
-function printProgress(progress){
+function printProgress(progress, msg){
     spinner.stop()
     /* process.stdout.clearLine();
     process.stdout.cursorTo(0); */
-    console.log(progress);
+    console.log(progress, msg || "");
     spinner.start()
 }
 /* Lets start this thing */

@@ -1,5 +1,5 @@
 var CLI = require('clui'),
-    Spinner = CLI.Spinner;
+    Spinner = CLI.Spinner,
     Line = CLI.Line;
 
 function make_spinner(msg) {
