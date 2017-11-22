@@ -1,7 +1,0 @@
-organization=decentriccorp
-projectKey=ioracle
-serverUrl=https://sonarcloud.io
-serverVersion=6.7.0.33301
-dashboardUrl=https://sonarcloud.io/dashboard/index/ioracle
-ceTaskId=AV_k9EmP1Q5aQJmOIPIE
-ceTaskUrl=https://sonarcloud.io/api/ce/task?id=AV_k9EmP1Q5aQJmOIPIE
