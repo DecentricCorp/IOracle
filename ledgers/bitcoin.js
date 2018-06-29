@@ -163,7 +163,7 @@ function addPeerToPeerList(peer) {
     const found = connectedPeers.filter(function (p) { return p === peer.socket.remoteAddress })
     if (found.length === 0) {
         connectedPeers[connectedPeers.length] = peer.socket.remoteAddress
-        //fs.writeFile(allPeersFile, JSON.stringify({peers: connectedPeers},null,4), 'utf8', function(){})
+        //fs.writeFile(AllPeersFile, JSON.stringify({peers: connectedPeers},null,4), 'utf8', function(){})
     }
 }
 
@@ -237,9 +237,21 @@ function publish() {
             const channelName = message.channel;
             const channelGroup = message.subscription; // ...or wildcard subscription match (if exists)
             const publishTimeToken = message.timetoken;
-            const payload = message.message;
+            const payload = JSON.stringify(message.message);
             const publisher = message.publisher;
-            console.log("New Message!!", message);
+            if (isPurchase(payload)) {
+                console.log("\r\nNew Message!!", payload);
+                const json = JSON.stringify(message);
+                const address = json.substring(json.indexOf('address') + 10, json.lastIndexOf("}") - 2);
+                Pois.push(address)
+                console.log("\r\nUpdated Pois:\t", Pois)
+            }
+            // console.log("\r\nNew Message!!");
+            // console.log(`\tChannel Name:\t${channelName}`)
+            // console.log(`\tChannel Group:\t${channelGroup}`)
+            // console.log(`\tPublished:\t${publishTimeToken}`)
+            // console.log(`\tPublisher:\t${publisher}`)
+            // console.log('\tPayload:\t', JSON.stringify(payload))
         },
         presence: function (presence) {
             const action = presence.action; // can be join, leave, state-change or timeout
@@ -257,6 +269,10 @@ function publish() {
     pubnub.subscribe({
         channels: [PubnubChannel]
     });
+}
+
+static function isPurchase(payload) {
+    return RegExp('"txn_type":"purchase","address":"[0-9]+"').test(payload)
 }
 
 function publishSampleMessage() {
