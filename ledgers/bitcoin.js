@@ -5,9 +5,9 @@ const Inventory = require('bitcoin-inventory')
 const Filter = require('bitcoin-filter')
 const Reverse = require("buffer-reverse")
 const DataDir = "./." + Name + "/"
-const AllPeer2sFile = DataDir + "/all-peers.json"
+const AllPeersFile = DataDir + "/all-peers.json"
 const RelayersFile = DataDir + "/peers.json"
-var connectedPeers = require(allPeersFile).peers
+var connectedPeers = require(AllPeersFile).peers
 const Relayers = require(RelayersFile).peers
 const BlocksFile = DataDir + "/blocks.json"
 const Blocks = require(BlocksFile).blocks
@@ -217,9 +217,9 @@ function getHistory() {
 
 function publish() {
     pubnub = new PubNub({
-        publishKey: '___',
-        subscribeKey: '___',
-        secretKey: '___',
+        publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
+        subscribeKey: 'sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942',
+        secretKey: 'sec-c-YTI3ZTA1NjUtOGFlYi00MjQ3LWFlODUtNzU0YWFlYmRhYTdm',
         ssl: true
     })
     pubnub.addListener({
@@ -289,4 +289,4 @@ function printProgress(progress, msg) {
 /* Lets start this thing */
 preInit(init)
 publish()
-publishSampleMessage()
+// publishSampleMessage()
