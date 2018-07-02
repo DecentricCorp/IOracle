@@ -13,8 +13,8 @@ const BlocksFile = DataDir + "/blocks.json"
 const Blocks = require(BlocksFile).blocks
 const InterestingTransactionsFile = DataDir + "/transactions.json"
 const InterestingTransactions = require(InterestingTransactionsFile).transactions
-const PoisFile = DataDir + "/pois.json"
-const Pois = require(PoisFile).pois
+const POIsFile = DataDir + "/pois.json"
+const POIs = require(POIsFile).pois
 const Params = require('webcoin-bitcoin').net
 Params.numPeers = 50
 Params.staticPeers = Relayers.reverse()
@@ -22,7 +22,7 @@ const FS = require('fs')
 const Bitcoin = require('bitcoinjs-lib')
 const Colors = require('colors')
 const RPC = require('../rpc')
-const PubnubChannel = 'emblem_cart';
+const PubnubChannel = 'emblem_cart'
 const PubNub = require('pubnub')
 const Timeout = 15
 var timeouts = 0
@@ -102,15 +102,13 @@ function init() {
     inv.on('tx', (tx) => {
         const txid = Reverse(tx.getHash()).toString('hex')
         const report = { txid: txid, addresses: { out: [] }, tracked: false }
-        var tracked
         tx.outs.forEach(function (out, index) {
-            tracked = []
             try {
                 const address = Bitcoin.address.fromOutputScript(out.script).toString()
                 if (Verbose) { console.log("txid", txid, "address", address) } else {
                     spinner.message("txid: " + txid)
                 }
-                tracked = Pois.filter(function (poi) { return poi === address })
+                const tracked = POIs.filter(function (poi) { return poi === address })
                 report.addresses.out[report.addresses.out.length] = { address: address, value: parseInt(out.value), tracked: tracked.length > 0 }
                 if (tracked.length > 0) { /* Flag this report as being tracked */
                     filter.add(new Buffer(address, 'hex'))
@@ -118,7 +116,7 @@ function init() {
                     report.reported = false
                     //console.log("---------  Tracked!!", tracked, JSON.stringify(report, null, 4))
                 }
-            } catch (e) { }
+            } catch (e) { console.log(`Gracefully Failing on Error ${e.message}`) }
             if (index === tx.outs.length - 1) { /* Done looping over outputs, time to finish */
                 if (report.tracked) {
                     InterestingTransactions[InterestingTransactions.length] = report
@@ -138,7 +136,7 @@ function preInit(cb) {
     console.log(Name, "Verbose?", Verbose)
     console.log(Name, "Loaded", colorInt(Relayers.length), "relaying peers")
     console.log(Name, "Loaded", colorInt(connectedPeers.length), "general peers")
-    console.log(Name, "Loaded", colorInt(Pois.length), "addresses of interest")
+    console.log(Name, "Loaded", colorInt(POIs.length), "addresses of interest")
     console.log(Name, "Loaded", colorInt(InterestingTransactions.length), "interesting Transactions")
     console.log(Name, "          -", colorInt(reported.length), "Transactions have been reported")
     console.log(Name, "          -", colorInt(InterestingTransactions.length - reported.length), "Transactions have not been reported")
@@ -151,11 +149,14 @@ function colorInt(count) {
 }
 
 function addToMemPool(txid) {
-    const found = mempool.filter(function (tx) { return tx === txid })
+    const found = mempool.filter(function (id) { return id === txid })
     if (found.length > 0) {
-        console.log("====> Duplicate", txid)
+        // console.log("====> Duplicate TXN ID: ", txid)
+        return false
     } else {
-        //console.log("Adding to mempool", txid)
+        console.log("Adding to mempool", txid)
+        mempool.push(txid)
+        return true
     }
 }
 
@@ -210,12 +211,12 @@ function getHistory() {
             stringifiedTimeToken: true, // false is the default
         },
         function (status, response) {
-            console.log(status, response);
+            console.log(status, response)
         }
-    );
+    )
 }
 
-function publish() {
+function subscribe() {
     pubnub = new PubNub({
         publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
         subscribeKey: 'sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942',
@@ -225,28 +226,29 @@ function publish() {
     pubnub.addListener({
         status: function (status) {
             if (status.category === "PNConnectedCategory") {
-                publishSampleMessage();
+                publish()
             }
-            const affectedChannelGroups = status.affectedChannelGroups;
-            const affectedChannels = status.affectedChannels;
-            const category = status.category;
-            const operation = status.operation;
-            console.log("New Status!!", status);
+            const affectedChannelGroups = status.affectedChannelGroups
+            const affectedChannels = status.affectedChannels
+            const category = status.category
+            const operation = status.operation
+            console.log("New Status!!", status)
         },
         message: function (message) {
-            const channelName = message.channel;
-            const channelGroup = message.subscription; // ...or wildcard subscription match (if exists)
-            const publishTimeToken = message.timetoken;
-            const payload = JSON.stringify(message.message);
-            const publisher = message.publisher;
-            if (isPurchase(payload)) {
-                console.log("\r\nNew Message!!", payload);
-                const json = JSON.stringify(message);
-                const address = json.substring(json.indexOf('address') + 10, json.lastIndexOf("}") - 2);
-                Pois.push(address)
-                console.log("\r\nUpdated Pois:\t", Pois)
+            const channelName = message.channel
+            const channelGroup = message.subscription // ...or wildcard subscription match (if exists)
+            const publishTimeToken = message.timetoken
+            const publisher = message.publisher
+            const payload = JSON.stringify(message.message)
+            const payloadDict = extractDictFromJSON(payload)
+            if (payloadDict['txn_type'] == 'purchase') {
+                console.log("\r\nNew Message!!", payload)
+                const address = payloadDict["address"];
+                POIs.push(address)
+                console.log("\r\nUpdated Monitored Addresses:\t", POIs)
+                publish('Purchase Detected', `Monitoring Address ${address}`)
             }
-            // console.log("\r\nNew Message!!");
+            // console.log("\r\nNew Message!!")
             // console.log(`\tChannel Name:\t${channelName}`)
             // console.log(`\tChannel Group:\t${channelGroup}`)
             // console.log(`\tPublished:\t${publishTimeToken}`)
@@ -254,55 +256,74 @@ function publish() {
             // console.log('\tPayload:\t', JSON.stringify(payload))
         },
         presence: function (presence) {
-            const action = presence.action; // can be join, leave, state-change or timeout
-            const channelName = presence.channel;
-            const userCount = presence.occupancy;
-            const userState = presence.state;
-            const channelGroup = presence.subscription; // ...or wildcard subscription match (if exists)
-            const publishTimeToken = presence.timestamp;
-            const currentTimetoken = presence.timetoken;
-            const userUUIDs = presence.uuid;
-            console.log("New Presence!!", presence);
+            const action = presence.action // can be join, leave, state-change or timeout
+            const channelName = presence.channel
+            const userCount = presence.occupancy
+            const userState = presence.state
+            const channelGroup = presence.subscription // ...or wildcard subscription match (if exists)
+            const publishTimeToken = presence.timestamp
+            const currentTimetoken = presence.timetoken
+            const userUUIDs = presence.uuid
+            console.log("New Presence!!", presence)
         }
     })
-    console.log("Subscribing...");
+    console.log("Subscribing...")
     pubnub.subscribe({
         channels: [PubnubChannel]
-    });
+    })
 }
 
-static function isPurchase(payload) {
-    return RegExp('"txn_type":"purchase","address":"[0-9]+"').test(payload)
+function extractDictFromJSON(payload) {
+    const dict = []
+    const keyValuePairs = payload.split(',').map(function (kvp) {
+        return kvp.split(':')
+    }).map(function (kvp) {
+        return kvp.map(function (keyOrValue) {
+            return keyOrValue.replace(/{/g, '').replace(/}/g, '').replace(/"/g, '')
+        })
+    })
+    keyValuePairs.forEach(function (kvp) {
+        dict[kvp[0]] = kvp[1]
+    })
+    return dict
 }
 
-function publishSampleMessage() {
-    pubnub.publish(
-        {
+function flatten(arr) {
+    return arr.reduce(function (flat, toFlatten) {
+        return flat.concat(Array.isArray(toFlatten) ? flatten(toFlatten) : toFlatten);
+    }, []);
+}
+
+function publish(message, meta) {
+    pubnub.publish({
             message: {
-                such: 'object'
+                'body' : message
             },
             channel: PubnubChannel,
             sendByPost: false, // true to send via post
             storeInHistory: false, // override default storage options
             meta: {
-                "cool": "so meta"
-            } // publish extra meta with the request
+                'body' : meta
+            }
         },
         function (status, response) {
-            console.log(status, response);
+            console.log(status, response)
         }
-    );
+    )
 }
 
 function printProgress(progress, msg) {
     spinner.stop()
-    /* process.stdout.clearLine();
-    process.stdout.cursorTo(0); */
-    console.log(progress, msg || "");
+    /* process.stdout.clearLine()
+    process.stdout.cursorTo(0) */
+    console.log(progress, msg || "")
     spinner.start()
 }
 
 /* Lets start this thing */
 preInit(init)
-publish()
-// publishSampleMessage()
+subscribe()
+
+module.exports.extractDictFromJSON = extractDictFromJSON
+module.exports.addToMemPool = addToMemPool
+module.exports.colorInt = colorInt

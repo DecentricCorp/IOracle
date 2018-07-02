@@ -1,5 +1,4 @@
 const expect = require('chai').expect
-const btc = require('./ledgers/bitcoin')
 
 describe('IOracle', function(){
     describe('Should keep connecting until receiving transactions', function(){
@@ -22,13 +21,5 @@ describe('IOracle', function(){
     })
     describe('Should mark interesting transactions as reported once they have been reported', function(){
 
-    })
-})
-
-describe('Bitcoin', () => {
-    describe('is purchase', () => {
-        it('returns true if the payload indicates a purchase', () => {
-            // chai.expect(!btc.isPurchase(''))
-        })
     })
 })
