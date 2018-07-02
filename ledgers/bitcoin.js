@@ -46,7 +46,6 @@ function init() {
 
     peers.on('peer', (peer) => {
         timeouts = 0
-        /* Add peer to list */
         addPeerToPeerList(peer)
 
         /* DIRTY HAx0R looking for open RPC
@@ -161,9 +160,9 @@ function addToMemPool(txid) {
 }
 
 function addPeerToPeerList(peer) {
-    const found = connectedPeers.filter(function (p) { return p === peer.socket.remoteAddress })
+    const found = connectedPeers.filter(remoteAddress => remoteAddress === peer.socket.remoteAddress)
     if (found.length === 0) {
-        connectedPeers[connectedPeers.length] = peer.socket.remoteAddress
+        connectedPeers.push(peer.socket.remoteAddress)
         //fs.writeFile(AllPeersFile, JSON.stringify({peers: connectedPeers},null,4), 'utf8', function(){})
     }
 }
@@ -180,7 +179,9 @@ function addPeerToRelayingPeerList(peer) {
 }
 
 function removePeerFromPeerList(peer) {
-    connectedPeers = connectedPeers.filter(function (p) { return p !== peer.socket.remoteAddress })
+    const address = peer.socket.remoteAddress
+    if (connectedPeers.includes(address))
+        connectedPeers.splice(connectedPeers.indexOf(address), 1)
 }
 
 function resetPeerConnection() {
@@ -296,16 +297,16 @@ function flatten(arr) {
 
 function publish(message, meta) {
     pubnub.publish({
-            message: {
-                'body' : message
-            },
-            channel: PubnubChannel,
-            sendByPost: false, // true to send via post
-            storeInHistory: false, // override default storage options
-            meta: {
-                'body' : meta
-            }
+        message: {
+            'body': message
         },
+        channel: PubnubChannel,
+        sendByPost: false, // true to send via post
+        storeInHistory: false, // override default storage options
+        meta: {
+            'body': meta
+        }
+    },
         function (status, response) {
             console.log(status, response)
         }
@@ -327,3 +328,6 @@ subscribe()
 module.exports.extractDictFromJSON = extractDictFromJSON
 module.exports.addToMemPool = addToMemPool
 module.exports.colorInt = colorInt
+module.exports.addPeerToPeerList = addPeerToPeerList
+module.exports.connectedPeers = connectedPeers
+module.exports.removePeerFromPeerList = removePeerFromPeerList
