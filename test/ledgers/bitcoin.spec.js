@@ -39,6 +39,22 @@ describe('Bitcoin', () => {
             expect(btc.connectedPeers).to.eql(['67.205.182.87'])
         })
     })
+    describe('add peer to relaying peer list', () => {
+        it('adds the peer to the relayers if the peer is not already in the list', () => {
+            const peer = new MockPeer(new MockSocket('012.345.678.910'))
+            expect(btc.Relayers).to.eql(['104.198.89.77'])
+            btc.addPeerToRelayingPeerList(peer)
+            expect(btc.Relayers).to.eql(['104.198.89.77', '012.345.678.910'])
+            btc.addPeerToRelayingPeerList(peer)
+            expect(btc.Relayers).to.eql(['104.198.89.77', '012.345.678.910'])
+        })
+    })
+    describe('reset peer connection', () => {
+
+    })
+    describe('get pubnub history', () => {
+        
+    })
 })
 
 class MockSocket {

@@ -5,13 +5,13 @@ const Inventory = require('bitcoin-inventory')
 const Filter = require('bitcoin-filter')
 const Reverse = require("buffer-reverse")
 const DataDir = "./." + Name + "/"
-const AllPeersFile = DataDir + "/all-peers.json"
-const RelayersFile = DataDir + "/peers.json"
-var connectedPeers = require(AllPeersFile).peers
+const PeersFile = DataDir + "/peers.json"
+var connectedPeers = require(PeersFile).peers
+const RelayersFile = DataDir + "/relayers.json"
 const Relayers = require(RelayersFile).peers
 const BlocksFile = DataDir + "/blocks.json"
 const Blocks = require(BlocksFile).blocks
-const InterestingTransactionsFile = DataDir + "/transactions.json"
+const InterestingTransactionsFile = DataDir + "/interesting-txns.json"
 const InterestingTransactions = require(InterestingTransactionsFile).transactions
 const POIsFile = DataDir + "/pois.json"
 const POIs = require(POIsFile).pois
@@ -31,7 +31,7 @@ var receivingInventory = false
 var filter, pubnub, spinner
 
 // create peer group
-const stuckTimer = getTimer(Timeout, resetPeerConnection)
+// const stuckTimer = getTimer(Timeout, resetPeerConnection)
 const PeerGroup = require('bitcoin-net').PeerGroup
 var peers, inv
 
@@ -169,12 +169,13 @@ function addPeerToPeerList(peer) {
 
 function addPeerToRelayingPeerList(peer) {
     const peerAddress = peer.socket.remoteAddress
-    const found = Relayers.filter(function (p) { return p === peerAddress })
+    const found = Relayers.filter(function (relayer) { return relayer === peerAddress })
     if (found.length === 0) {
-        Relayers[Relayers.length] = peerAddress
-        FS.writeFile(RelayersFile, JSON.stringify({ peers: Relayers }, null, 4), 'utf8', function () {
-            if (Verbose) { printProgress("Found peer " + peerAddress + " that relays transactions, Added peer to", RelayersFile) }
-        })
+        Relayers.push(peerAddress)
+        // TODO publish to a channel instead of writing to file (which doesn't currently work)
+        // FS.writeFile(RelayersFile, JSON.stringify({ peers: Relayers }, null, 4), 'utf8', function () {
+        //     if (Verbose) { printProgress("Found peer " + peerAddress + " that relays transactions, Added peer to", RelayersFile) }
+        // })
     }
 }
 
@@ -194,15 +195,15 @@ function resetPeerConnection() {
     }
 }
 
-function getTimer(max, cb) {
-    return setInterval(function () {
-        timeouts += 1
-        if (timeouts >= max) {
-            timeouts = 0
-            return cb()
-        }
-    }, 1000)
-}
+// function getTimer(max, cb) {
+//     return setInterval(function () {
+//         timeouts += 1
+//         if (timeouts >= max) {
+//             timeouts = 0
+//             return cb()
+//         }
+//     }, 1000)
+// }
 
 function getHistory() {
     pubnub.history(
@@ -289,12 +290,6 @@ function extractDictFromJSON(payload) {
     return dict
 }
 
-function flatten(arr) {
-    return arr.reduce(function (flat, toFlatten) {
-        return flat.concat(Array.isArray(toFlatten) ? flatten(toFlatten) : toFlatten);
-    }, []);
-}
-
 function publish(message, meta) {
     pubnub.publish({
         message: {
@@ -331,3 +326,6 @@ module.exports.colorInt = colorInt
 module.exports.addPeerToPeerList = addPeerToPeerList
 module.exports.connectedPeers = connectedPeers
 module.exports.removePeerFromPeerList = removePeerFromPeerList
+module.exports.timeouts = timeouts
+module.exports.addPeerToRelayingPeerList = addPeerToRelayingPeerList
+module.exports.Relayers = Relayers
