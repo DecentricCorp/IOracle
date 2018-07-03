@@ -53,7 +53,17 @@ describe('Bitcoin', () => {
 
     })
     describe('get pubnub history', () => {
-        
+
+    })
+    describe('subscribe', () => {
+        it('subscribes to a service channel and listens for status, message, and presence events', () => {
+            const service = new MockPubNub()
+            btc.subscribe(service)
+            expect(service.subscription.channels).to.eql(['emblem_cart'])
+            expect(service.listener.status)
+            expect(service.listener.message)
+            expect(service.listener.presence)
+        })
     })
 })
 
@@ -66,5 +76,73 @@ class MockSocket {
 class MockPeer {
     constructor(socket) {
         this.socket = socket
+    }
+}
+
+class MockPubNub {
+    addListener(listener) {
+        this.listener = listener
+    }
+    subscribe(subscription) {
+        this.subscription = subscription
+    }
+}
+
+class MockStatus {
+    constructor(affectedChannelGroups, affectedChannels, category, operation) {
+        this.affectedChannelGroups = affectedChannelGroups
+        this.affectedChannels = affectedChannels
+        this.category = category
+        this.operation = operation
+    }
+}
+
+class MockMessage {
+    constructor(channelName, channelGroup, publishTimeToken, publisher, payload) {
+        this.channel = channelName
+        this.subscription = channelGroup
+        this.timetoken = publishTimeToken
+        this.publisher = publisher
+        this.message = payload
+    }
+}
+
+class MockPresence { // ABSTRACT
+    constructor(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs) {
+        this.channel = channelName
+        this.occupancy = userCount
+        this.state = userState
+        this.subscription = channelGroup
+        this.timestamp = publishTimeToken
+        this.timetoken = currentTimetoken
+        this.uuid = userUUIDs
+    }
+}
+
+class MockJoinPresence extends MockPresence {
+    constructor(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs) {
+        super(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs)
+        this.action = 'join'
+    }
+}
+
+class MockLeavePresence extends MockPresence {
+    constructor(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs) {
+        super(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs)
+        this.action = 'leave'
+    }
+}
+
+class MockStateChangePresence extends MockPresence {
+    constructor(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs) {
+        super(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs)
+        this.action = 'state-change'
+    }
+}
+
+class MockTimeoutPresence extends MockPresence {
+    constructor(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs) {
+        super(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs)
+        this.action = 'timeout'
     }
 }

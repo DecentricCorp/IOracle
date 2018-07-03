@@ -195,16 +195,6 @@ function resetPeerConnection() {
     }
 }
 
-// function getTimer(max, cb) {
-//     return setInterval(function () {
-//         timeouts += 1
-//         if (timeouts >= max) {
-//             timeouts = 0
-//             return cb()
-//         }
-//     }, 1000)
-// }
-
 function getHistory() {
     pubnub.history(
         {
@@ -218,14 +208,8 @@ function getHistory() {
     )
 }
 
-function subscribe() {
-    pubnub = new PubNub({
-        publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
-        subscribeKey: 'sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942',
-        secretKey: 'sec-c-YTI3ZTA1NjUtOGFlYi00MjQ3LWFlODUtNzU0YWFlYmRhYTdm',
-        ssl: true
-    })
-    pubnub.addListener({
+function subscribe(service) {
+    service.addListener({
         status: function (status) {
             if (status.category === "PNConnectedCategory") {
                 publish()
@@ -250,12 +234,6 @@ function subscribe() {
                 console.log("\r\nUpdated Monitored Addresses:\t", POIs)
                 publish('Purchase Detected', `Monitoring Address ${address}`)
             }
-            // console.log("\r\nNew Message!!")
-            // console.log(`\tChannel Name:\t${channelName}`)
-            // console.log(`\tChannel Group:\t${channelGroup}`)
-            // console.log(`\tPublished:\t${publishTimeToken}`)
-            // console.log(`\tPublisher:\t${publisher}`)
-            // console.log('\tPayload:\t', JSON.stringify(payload))
         },
         presence: function (presence) {
             const action = presence.action // can be join, leave, state-change or timeout
@@ -270,7 +248,7 @@ function subscribe() {
         }
     })
     console.log("Subscribing...")
-    pubnub.subscribe({
+    service.subscribe({
         channels: [PubnubChannel]
     })
 }
@@ -291,17 +269,18 @@ function extractDictFromJSON(payload) {
 }
 
 function publish(message, meta) {
-    pubnub.publish({
+    const payload = {
         message: {
             'body': message
         },
         channel: PubnubChannel,
-        sendByPost: false, // true to send via post
-        storeInHistory: false, // override default storage options
+        sendByPost: false,
+        storeInHistory: false,
         meta: {
             'body': meta
         }
-    },
+    }
+    pubnub.publish(payload,
         function (status, response) {
             console.log(status, response)
         }
@@ -318,7 +297,13 @@ function printProgress(progress, msg) {
 
 /* Lets start this thing */
 preInit(init)
-subscribe()
+pubnub = new PubNub({
+    publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
+    subscribeKey: 'sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942',
+    secretKey: 'sec-c-YTI3ZTA1NjUtOGFlYi00MjQ3LWFlODUtNzU0YWFlYmRhYTdm',
+    ssl: true
+})
+subscribe(pubnub)
 
 module.exports.extractDictFromJSON = extractDictFromJSON
 module.exports.addToMemPool = addToMemPool
@@ -329,3 +314,5 @@ module.exports.removePeerFromPeerList = removePeerFromPeerList
 module.exports.timeouts = timeouts
 module.exports.addPeerToRelayingPeerList = addPeerToRelayingPeerList
 module.exports.Relayers = Relayers
+module.exports.pubnub = pubnub
+module.exports.subscribe = subscribe
