@@ -22,7 +22,7 @@ const FS = require('fs')
 const Bitcoin = require('bitcoinjs-lib')
 const Colors = require('colors')
 const RPC = require('../rpc')
-const PubnubChannel = 'emblem_cart'
+const ServiceChannel = 'emblem_cart'
 const PubNub = require('pubnub')
 const Timeout = 15
 var timeouts = 0
@@ -195,24 +195,83 @@ function resetPeerConnection() {
     }
 }
 
+// function httpGetAsync(url, callback) {
+//     const xmlHttp = new XMLHttpRequest()
+//     xmlHttp.onreadystatechange = function () {
+//         if (xmlHttp.readyState == 4 && xmlHttp.status == 200)
+//             callback(xmlHttp.responseText)
+//     }
+//     xmlHttp.open("GET", url, true) // true for asynchronous 
+//     xmlHttp.send(null)
+// }
+
+const request = require('request')
+
 function getHistory() {
-    pubnub.history(
-        {
-            channel: PubnubChannel,
-            count: 100, // how many items to fetch
-            stringifiedTimeToken: true, // false is the default
-        },
-        function (status, response) {
-            console.log(status, response)
-        }
-    )
+    const history = []
+    request('https://ps.pndsn.com/v2/history/sub-key/sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942/channel/emblem_cart?stringtoken=true&count=100&reverse=false', { json: true }, (err, res, body) => {
+        if (err) { return console.log(err) }
+        history.push(body)
+        history.push(res)
+        console.log(body)
+        console.log(res)
+    })
+    return history
+
+    //     const history = service.history(
+    //         {
+    //             channel: ServiceChannel,
+    //             count: 100, // how many items to fetch
+    //             stringifiedTimeToken: true, // false is the default
+    //         },
+    //         (status, response) => {
+    //             // const item = `${status} ${response}`
+    //             // history.push(item)
+    //             // console.log(item)
+    //             return response
+    //         }
+    //     )
+    //     return history
+
+    //     const callback = (response) => console.log(response)
+    //     httpGetAsync('https://ps.pndsn.com/v2/history/sub-key/sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942/channel/emblem_cart?stringtoken=true&count=100&reverse=false', callback)
+    //     _service = service || pubnub
+    // history = []
+    // return await pubnub.history(
+    //     {
+    //         channel: ServiceChannel,
+    //         count: 100 // how many items to fetch
+    //         // end: Date.now() * 10000
+    //         // stringifiedTimeToken: true, // false is the default
+    //     },
+    //     (status, response) => {
+    //         history.push('TOTALLY A HISTORY MESSAGE')
+    //         console.log("history", history)
+    //         return history
+    //     })
+    // history.push("item")
+    // console.log(`Status:\t${status}`)
+    // console.log(`Response:\t${response}`)
+    // console.log(`Messages:\t${response.messages}`)
+    // return history
+
+    //     return pubnub.history(
+    //         {
+    //             channel: "emblem_cart",
+    //             count: 100,
+    //             start: 0
+    //         }).then(
+    //             function (response) {
+    //                 console.log('TOTALLY A HISTORY MESSAGE', { status: status, response: response })
+    //                 return response
+    //             })
 }
 
-function subscribe(service) {
+function subscribe(service = pubnub) {
     service.addListener({
         status: function (status) {
             if (status.category === "PNConnectedCategory") {
-                publish()
+                publish(service)
             }
             const affectedChannelGroups = status.affectedChannelGroups
             const affectedChannels = status.affectedChannels
@@ -232,7 +291,7 @@ function subscribe(service) {
                 const address = payloadDict["address"];
                 POIs.push(address)
                 console.log("\r\nUpdated Monitored Addresses:\t", POIs)
-                publish('Purchase Detected', `Monitoring Address ${address}`)
+                publish(service, 'Purchase Detected', `Monitoring Address ${address}`)
             }
         },
         presence: function (presence) {
@@ -249,7 +308,7 @@ function subscribe(service) {
     })
     console.log("Subscribing...")
     service.subscribe({
-        channels: [PubnubChannel]
+        channels: [ServiceChannel]
     })
 }
 
@@ -268,23 +327,19 @@ function extractDictFromJSON(payload) {
     return dict
 }
 
-function publish(message, meta) {
+function publish(service = pubnub, message, meta) {
     const payload = {
         message: {
             'body': message
         },
-        channel: PubnubChannel,
+        channel: ServiceChannel,
         sendByPost: false,
         storeInHistory: false,
         meta: {
             'body': meta
         }
     }
-    pubnub.publish(payload,
-        function (status, response) {
-            console.log(status, response)
-        }
-    )
+    service.publish(payload, (status, response) => console.log(status, response))
 }
 
 function printProgress(progress, msg) {
@@ -301,9 +356,11 @@ pubnub = new PubNub({
     publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
     subscribeKey: 'sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942',
     secretKey: 'sec-c-YTI3ZTA1NjUtOGFlYi00MjQ3LWFlODUtNzU0YWFlYmRhYTdm',
-    ssl: true
+    ssl: true,
+    logVerbosity: true,
+    uuid: "muchUnique",
 })
-subscribe(pubnub)
+subscribe()
 
 module.exports.extractDictFromJSON = extractDictFromJSON
 module.exports.addToMemPool = addToMemPool
@@ -316,3 +373,6 @@ module.exports.addPeerToRelayingPeerList = addPeerToRelayingPeerList
 module.exports.Relayers = Relayers
 module.exports.pubnub = pubnub
 module.exports.subscribe = subscribe
+module.exports.publish = publish
+module.exports.pubnub = pubnub
+module.exports.getHistory = getHistory
