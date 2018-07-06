@@ -208,30 +208,30 @@ function resetPeerConnection() {
 const request = require('request')
 
 function getHistory() {
-    const history = []
-    request('https://ps.pndsn.com/v2/history/sub-key/sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942/channel/emblem_cart?stringtoken=true&count=100&reverse=false', { json: true }, (err, res, body) => {
-        if (err) { return console.log(err) }
-        history.push(body)
-        history.push(res)
-        console.log(body)
-        console.log(res)
+    // const history = []
+    request('https://ps.pndsn.com/v2/history/sub-key/sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942/channel/emblem_cart?stringtoken=true&count=100&reverse=false', function (error, response, body) {
+        console.log('error:', error); // Print the error if one occurred
+        console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
+        console.log('body:', body); // Print the HTML for the Google homepage.
     })
-    return history
+    // return history
 
-    //     const history = service.history(
-    //         {
-    //             channel: ServiceChannel,
-    //             count: 100, // how many items to fetch
-    //             stringifiedTimeToken: true, // false is the default
-    //         },
-    //         (status, response) => {
-    //             // const item = `${status} ${response}`
-    //             // history.push(item)
-    //             // console.log(item)
-    //             return response
-    //         }
-    //     )
-    //     return history
+    // const history = 
+    // pubnub.history(
+    //     {
+    //         channel: ServiceChannel,
+    //         count: 100, // how many items to fetch
+    //         stringifiedTimeToken: true, // false is the default
+    //     },
+    //     (status, response) => {
+    //         // const item = `${status} ${response}`
+    //         // history.push(item)
+    //         // console.log(item)
+    //         console.log(`RESPONSE:\t${response}`)
+    //         // return response
+    //     }
+    // )
+    // return history
 
     //     const callback = (response) => console.log(response)
     //     httpGetAsync('https://ps.pndsn.com/v2/history/sub-key/sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942/channel/emblem_cart?stringtoken=true&count=100&reverse=false', callback)
