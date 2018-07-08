@@ -2,7 +2,7 @@ const Name = "bitcoin"
 const UI = require('../ui.js')
 const Verbose = process.argv[2] || false
 const Inventory = require('bitcoin-inventory')
-const Filter = require('bitcoin-filter')
+const BitcoinFilter = require('bitcoin-filter')
 const Reverse = require("buffer-reverse")
 const DataDir = "./." + Name + "/"
 const PeersFile = DataDir + "/peers.json"
@@ -23,124 +23,137 @@ const Bitcoin = require('bitcoinjs-lib')
 const Colors = require('colors')
 const RPC = require('../rpc')
 const ServiceChannel = 'emblem_cart'
-const PubNub = require('pubnub')
+const PubNubService = require('pubnub')
 const Timeout = 15
 var timeouts = 0
 var mempool = []
 var receivingInventory = false
-var filter, pubnub, spinner
-
-// create peer group
-// const stuckTimer = getTimer(Timeout, resetPeerConnection)
+const PubNub = new PubNubService({
+    publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
+    subscribeKey: 'sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942',
+    secretKey: 'sec-c-YTI3ZTA1NjUtOGFlYi00MjQ3LWFlODUtNzU0YWFlYmRhYTdm',
+    ssl: true,
+    // logVerbosity: true,
+    uuid: "cv1",
+})
+var spinner
 const PeerGroup = require('bitcoin-net').PeerGroup
-var peers, inv
+const Peers = new PeerGroup(Params, ["wrtc"])
+const Filter = new BitcoinFilter(Peers)
+const Inv = Inventory(Peers)
 
 function init() {
-    peers = new PeerGroup(Params, ["wrtc"])
-    filter = new Filter(peers)
-    inv = Inventory(peers)
-    spinner = UI.make_spinner("connecting to peers, looking for transactions")
-    /* peers.once('connect', function(){
-        console.log("connected?")     
-    }) */
-
-    peers.on('peer', (peer) => {
-        timeouts = 0
-        addPeerToPeerList(peer)
-
-        /* DIRTY HAx0R looking for open RPC
-            try {
-                rpc.rpcCheck(peer.socket.remoteAddress)
-            } catch(err){} 
-        */
-        if (Verbose) { printProgress('Peer ' + connectedPeers.length + " " + peer.socket.remoteAddress) }
-
-        peer.once('disconnect', function (err) {
-            timeouts = 0
-            removePeerFromPeerList(peer)
-            if (Verbose) { printProgress("Disconnected from peer " + peer.socket.remoteAddress) }
-        })
-
-        peer.send('ping', {
-            nonce: require('crypto').pseudoRandomBytes(8)
-        }, true)
-    })
-
-    peers.on('inv', (inventory, peer) => {
-        timeouts = 0
-        if (inventory[0].type === 1) {
-            addPeerToRelayingPeerList(peer)
-            if (!receivingInventory) {
-                printProgress("Receiving Transaction Inventory")
-                receivingInventory = true
-            }
-            inventory.forEach(function (tx) {
-                inv.get(tx.hash)
-                const txid = Reverse(tx.hash).toString('hex')
-                if (Verbose) { printProgress('Transaction Inventory', txid) } else {
-                    spinner.message('Transaction Inventory: ' + txid)
-                }
-                addToMemPool(txid)
-            }, this)
-        } else {
-            mempool = [] /* Reset mempool */
-            const blockHash = Reverse(inventory[0].hash).toString('hex')
-
-            const blockHashRecorded = Blocks.filter(function (block) { return block === blockHash })
-            if (blockHashRecorded.length < 1) {
-                Blocks[Blocks.length] = blockHash
-                FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', function () {
-                    printProgress('Block Found', blockHash)
-                })
-            }
-        }
-    })
-    inv.on('merkleblock', (block) => {
-        console.log(Colors.red('merkleblock'), block)
-    })
-    inv.on('tx', (tx) => {
-        const txid = Reverse(tx.getHash()).toString('hex')
-        const report = { txid: txid, addresses: { out: [] }, tracked: false }
-        tx.outs.forEach(function (out, index) {
-            try {
-                const address = Bitcoin.address.fromOutputScript(out.script).toString()
-                if (Verbose) { console.log("txid", txid, "address", address) } else {
-                    spinner.message("txid: " + txid)
-                }
-                const tracked = POIs.filter(function (poi) { return poi === address })
-                report.addresses.out[report.addresses.out.length] = { address: address, value: parseInt(out.value), tracked: tracked.length > 0 }
-                if (tracked.length > 0) { /* Flag this report as being tracked */
-                    filter.add(new Buffer(address, 'hex'))
-                    report.tracked = true
-                    report.reported = false
-                    //console.log("---------  Tracked!!", tracked, JSON.stringify(report, null, 4))
-                }
-            } catch (e) { console.log(`Gracefully Failing on Error ${e.message}`) }
-            if (index === tx.outs.length - 1) { /* Done looping over outputs, time to finish */
-                if (report.tracked) {
-                    InterestingTransactions[InterestingTransactions.length] = report
-                    FS.writeFile(InterestingTransactionsFile, JSON.stringify({ transactions: InterestingTransactions }, null, 4), 'utf8', function () {
-                        console.log('---------  Interesting Transaction Found!', JSON.stringify(report, null, 4))
-                    })
-                }
-            }
-        })
-    })
-    peers.connect()
-}
-
-function preInit(cb) {
-    const reported = InterestingTransactions.filter(function (tx) { return tx.reported })
     console.log(Name, "Starting I/Oracle")
     console.log(Name, "Verbose?", Verbose)
     console.log(Name, "Loaded", colorInt(Relayers.length), "relaying peers")
     console.log(Name, "Loaded", colorInt(connectedPeers.length), "general peers")
     console.log(Name, "Loaded", colorInt(POIs.length), "addresses of interest")
     console.log(Name, "Loaded", colorInt(InterestingTransactions.length), "interesting Transactions")
+    const reported = InterestingTransactions.filter(function (tx) { return tx.reported })
     console.log(Name, "          -", colorInt(reported.length), "Transactions have been reported")
     console.log(Name, "          -", colorInt(InterestingTransactions.length - reported.length), "Transactions have not been reported")
     console.log(Name, "Loaded", colorInt(Blocks.length), "blocks")
-    return cb()
+
+    initPeerEvents()
+    initInvEvents()
+    spinner = UI.make_spinner("connecting to peers, looking for transactions")
+    Peers.connect()
+}
+
+function initInvEvents() {
+    Inv.on('merkleblock', (block) => {
+        console.log(Colors.red('merkleblock'), block);
+    });
+    Inv.on('tx', (tx) => {
+        const txid = Reverse(tx.getHash()).toString('hex');
+        const report = { txid: txid, addresses: { out: [] }, tracked: false };
+        tx.outs.forEach(function (out, index) {
+            try {
+                const address = Bitcoin.address.fromOutputScript(out.script).toString();
+                if (Verbose) {
+                    console.log("txid", txid, "address", address);
+                }
+                else {
+                    spinner.message("txid: " + txid);
+                }
+                const tracked = POIs.filter(function (poi) { return poi === address; });
+                report.addresses.out[report.addresses.out.length] = { address: address, value: parseInt(out.value), tracked: tracked.length > 0 };
+                if (tracked.length > 0) { /* Flag this report as being tracked */
+                    Filter.add(new Buffer(address, 'hex'));
+                    report.tracked = true;
+                    report.reported = false;
+                    //console.log("---------  Tracked!!", tracked, JSON.stringify(report, null, 4))
+                }
+            }
+            catch (e) {
+                console.log(`Gracefully Failing on Error ${e.message}`);
+            }
+            if (index === tx.outs.length - 1) { /* Done looping over outputs, time to finish */
+                if (report.tracked) {
+                    InterestingTransactions[InterestingTransactions.length] = report;
+                    FS.writeFile(InterestingTransactionsFile, JSON.stringify({ transactions: InterestingTransactions }, null, 4), 'utf8', function () {
+                        console.log('---------  Interesting Transaction Found!', JSON.stringify(report, null, 4));
+                    });
+                }
+            }
+        });
+    });
+}
+
+function initPeerEvents() {
+    Peers.on('peer', (peer) => {
+        timeouts = 0;
+        addPeerToPeerList(peer);
+        /* DIRTY HAx0R looking for open RPC
+            try {
+                rpc.rpcCheck(peer.socket.remoteAddress)
+            } catch(err){}
+        */
+        if (Verbose) {
+            printProgress('Peer ' + connectedPeers.length + " " + peer.socket.remoteAddress);
+        }
+        peer.once('disconnect', function (err) {
+            timeouts = 0;
+            removePeerFromPeerList(peer);
+            if (Verbose) {
+                printProgress("Disconnected from peer " + peer.socket.remoteAddress);
+            }
+        });
+        peer.send('ping', {
+            nonce: require('crypto').pseudoRandomBytes(8)
+        }, true);
+    });
+    Peers.on('inv', (inventory, peer) => {
+        timeouts = 0;
+        if (inventory[0].type === 1) {
+            addPeerToRelayingPeerList(peer);
+            if (!receivingInventory) {
+                printProgress("Receiving Transaction Inventory");
+                receivingInventory = true;
+            }
+            inventory.forEach(function (tx) {
+                Inv.get(tx.hash);
+                const txid = Reverse(tx.hash).toString('hex');
+                if (Verbose) {
+                    printProgress('Transaction Inventory', txid);
+                }
+                else {
+                    spinner.message('Transaction Inventory: ' + txid);
+                }
+                addToMemPool(txid);
+            }, this);
+        } else {
+            mempool = []; /* Reset mempool */
+            const blockHash = Reverse(inventory[0].hash).toString('hex');
+            const blockHashRecorded = Blocks.filter(function (block) { return block === blockHash; });
+            if (blockHashRecorded.length < 1) {
+                Blocks[Blocks.length] = blockHash;
+                FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', function () {
+                    printProgress('Block Found', blockHash);
+                });
+            }
+        }
+    });
 }
 
 function colorInt(count) {
@@ -188,8 +201,8 @@ function removePeerFromPeerList(peer) {
 function resetPeerConnection() {
     if (connectedPeers.length < Params.numPeers) {
         printProgress("Connected to " + connectedPeers.length + " non-relaying peers. Trying to connect to more. ")
-        peers.removeListener('peer', function (err) { console.log("err", err) })
-        peers.removeListener('inv', function (err) { console.log("err", err) })
+        Peers.removeListener('peer', function (err) { console.log("err", err) })
+        Peers.removeListener('inv', function (err) { console.log("err", err) })
         spinner.stop()
         init()
     }
@@ -205,73 +218,27 @@ function resetPeerConnection() {
 //     xmlHttp.send(null)
 // }
 
-const request = require('request')
+// const request = require('request')
 
 function getHistory() {
-    // const history = []
-    request('https://ps.pndsn.com/v2/history/sub-key/sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942/channel/emblem_cart?stringtoken=true&count=100&reverse=false', function (error, response, body) {
-        console.log('error:', error); // Print the error if one occurred
-        console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-        console.log('body:', body); // Print the HTML for the Google homepage.
-    })
-    // return history
-
-    // const history = 
-    // pubnub.history(
-    //     {
-    //         channel: ServiceChannel,
-    //         count: 100, // how many items to fetch
-    //         stringifiedTimeToken: true, // false is the default
-    //     },
-    //     (status, response) => {
-    //         // const item = `${status} ${response}`
-    //         // history.push(item)
-    //         // console.log(item)
-    //         console.log(`RESPONSE:\t${response}`)
-    //         // return response
-    //     }
-    // )
-    // return history
-
-    //     const callback = (response) => console.log(response)
-    //     httpGetAsync('https://ps.pndsn.com/v2/history/sub-key/sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942/channel/emblem_cart?stringtoken=true&count=100&reverse=false', callback)
-    //     _service = service || pubnub
-    // history = []
-    // return await pubnub.history(
-    //     {
-    //         channel: ServiceChannel,
-    //         count: 100 // how many items to fetch
-    //         // end: Date.now() * 10000
-    //         // stringifiedTimeToken: true, // false is the default
-    //     },
-    //     (status, response) => {
-    //         history.push('TOTALLY A HISTORY MESSAGE')
-    //         console.log("history", history)
-    //         return history
-    //     })
-    // history.push("item")
-    // console.log(`Status:\t${status}`)
-    // console.log(`Response:\t${response}`)
-    // console.log(`Messages:\t${response.messages}`)
-    // return history
-
-    //     return pubnub.history(
-    //         {
-    //             channel: "emblem_cart",
-    //             count: 100,
-    //             start: 0
-    //         }).then(
-    //             function (response) {
-    //                 console.log('TOTALLY A HISTORY MESSAGE', { status: status, response: response })
-    //                 return response
-    //             })
+    PubNub.history(
+        {
+            channel: "emblem_cart", // ServiceChannel
+            count: 100, // how many items to fetch
+            stringifiedTimeToken: true, // false is the default
+        },
+        (status, response) => {
+            console.log(`${status} ${response}`)
+        }
+    )
 }
 
-function subscribe(service = pubnub) {
-    service.addListener({
+function subscribe(service) {
+    _service = service || PubNub
+    _service.addListener({
         status: function (status) {
             if (status.category === "PNConnectedCategory") {
-                publish(service)
+                publish(_service)
             }
             const affectedChannelGroups = status.affectedChannelGroups
             const affectedChannels = status.affectedChannels
@@ -291,7 +258,7 @@ function subscribe(service = pubnub) {
                 const address = payloadDict["address"];
                 POIs.push(address)
                 console.log("\r\nUpdated Monitored Addresses:\t", POIs)
-                publish(service, 'Purchase Detected', `Monitoring Address ${address}`)
+                publish(_service, 'Purchase Detected', `Monitoring Address ${address}`)
             }
         },
         presence: function (presence) {
@@ -307,7 +274,7 @@ function subscribe(service = pubnub) {
         }
     })
     console.log("Subscribing...")
-    service.subscribe({
+    _service.subscribe({
         channels: [ServiceChannel]
     })
 }
@@ -327,7 +294,9 @@ function extractDictFromJSON(payload) {
     return dict
 }
 
-function publish(service = pubnub, message, meta) {
+function publish(service, message, meta) {
+    console.log("THIS IS THE SERVICE CHANNEL", ServiceChannel)
+    const _service = service || PubNub
     const payload = {
         message: {
             'body': message
@@ -339,7 +308,7 @@ function publish(service = pubnub, message, meta) {
             'body': meta
         }
     }
-    service.publish(payload, (status, response) => console.log(status, response))
+    _service.publish(payload, (status, response) => console.log(status, response))
 }
 
 function printProgress(progress, msg) {
@@ -351,15 +320,7 @@ function printProgress(progress, msg) {
 }
 
 /* Lets start this thing */
-preInit(init)
-pubnub = new PubNub({
-    publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
-    subscribeKey: 'sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942',
-    secretKey: 'sec-c-YTI3ZTA1NjUtOGFlYi00MjQ3LWFlODUtNzU0YWFlYmRhYTdm',
-    ssl: true,
-    logVerbosity: true,
-    uuid: "muchUnique",
-})
+init()
 subscribe()
 
 module.exports.extractDictFromJSON = extractDictFromJSON
@@ -371,8 +332,9 @@ module.exports.removePeerFromPeerList = removePeerFromPeerList
 module.exports.timeouts = timeouts
 module.exports.addPeerToRelayingPeerList = addPeerToRelayingPeerList
 module.exports.Relayers = Relayers
-module.exports.pubnub = pubnub
+module.exports.pubnub = PubNub
 module.exports.subscribe = subscribe
 module.exports.publish = publish
-module.exports.pubnub = pubnub
+module.exports.pubnub = PubNub
 module.exports.getHistory = getHistory
+module.exports.init = init

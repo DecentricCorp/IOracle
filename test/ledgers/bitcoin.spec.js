@@ -87,8 +87,6 @@ describe('Bitcoin', () => {
     })
     describe('history', () => {
         it('returns the specified items from the service history', () => {
-            // btc.getHistory()
-            // done()
             expect(btc.getHistory()).to.equal('[[{"text":"hey"},{"text":"hey"},{"text":"hey2","txn_type":"purchase"},{"text":"hey2","txn_type":"purchase"},{"text":"hey"},{"text":"hey"},{"text":"Enter Message Here"},{"text":"HISTORY MESSAGE"}],"15308024924992581","15308147177087533"]')
         })
     })
