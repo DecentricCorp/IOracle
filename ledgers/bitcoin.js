@@ -279,16 +279,35 @@ function subscribe(service) {
 function removeStaleAddresses(cutoffTime = Date.now()) {
     console.log(`\r\nRemoving stale addresses. Cutoff time of ${cutoffTime}`)
     const pairsAwaitingTimeout = []
-    for (pair in PoiTimeoutPairs) {
+    /* for (pair in this.PoiTimeoutPairs) {
+        if (cutoffTime < pair.timeout) {
+            this.pairsAwaitingTimeout.push(pair)
+        } else {
+            this.POIs.splice(this.POIs.indexOf(pair.address), 1)
+        }
+    } */
+    function checkTimeout(pairs, index, cb){
+        var pair = pairs[index]
         if (cutoffTime < pair.timeout) {
             pairsAwaitingTimeout.push(pair)
         } else {
             POIs.splice(POIs.indexOf(pair.address), 1)
         }
+        if (pairs.length -1 === index) {
+            return cb()
+        } else {
+            checkTimeout(pairs, index + 1, cb)
+        }
     }
-    PoiTimeoutPairs = pairsAwaitingTimeout
-    console.log('\r\nMonitored Addresses:\t', POIs)
-    console.log('\r\nWaiting to Timeout:\t', PoiTimeoutPairs)
+    console.log("-------- pairs", this.PoiTimeoutPairs)
+    checkTimeout(this.PoiTimeoutPairs, 0, function(){
+        console.log("Complete")
+        this.PoiTimeoutPairs = pairsAwaitingTimeout
+        console.log('\r\nMonitored Addresses:\t', POIs)
+        console.log('\r\nWaiting to Timeout:\t', this.PoiTimeoutPairs)
+    })
+    
+    
 }
 
 function extractDictFromJSON(payload) {
