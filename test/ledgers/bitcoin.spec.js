@@ -52,10 +52,7 @@ describe('Bitcoin', () => {
     describe('reset peer connection', () => {
 
     })
-    describe('get pubnub history', () => {
-
-    })
-    describe('subscribe', () => { // TODO test actual PubNub service
+    describe('subscribe to PubNub', () => { // TODO test actual PubNub service
         it('subscribes to a service channel and listens for status, message, and presence events', () => {
             const service = new MockPubNub()
             btc.subscribe(service)
@@ -65,7 +62,7 @@ describe('Bitcoin', () => {
             // expect(service.listener.presence)
         })
     })
-    describe('publish', () => { // TODO test actual PubNub service
+    describe('publish to PubNub', () => { // TODO test actual PubNub service
         it('publishes a message with the payload to the service before logging the status/response', () => {
             const payload = {
                 message: {
@@ -85,9 +82,46 @@ describe('Bitcoin', () => {
             expect(statusAndResponse).to.equal('undefinedundefined')
         })
     })
-    describe('history', () => {
+    describe('get PubNub history', () => {
         it('returns the specified items from the service history', () => {
-            expect(btc.getHistory()).to.equal('[[{"text":"hey"},{"text":"hey"},{"text":"hey2","txn_type":"purchase"},{"text":"hey2","txn_type":"purchase"},{"text":"hey"},{"text":"hey"},{"text":"Enter Message Here"},{"text":"HISTORY MESSAGE"}],"15308024924992581","15308147177087533"]')
+            // expect(btc.getHistory()).to.equal('[[{"text":"hey"},{"text":"hey"},{"text":"hey2","txn_type":"purchase"},{"text":"hey2","txn_type":"purchase"},{"text":"hey"},{"text":"hey"},{"text":"Enter Message Here"},{"text":"HISTORY MESSAGE"}],"15308024924992581","15308147177087533"]')
+        })
+    })
+    describe('remove stale addresses', () => {
+        it('removes monitored addresses that are ready to timeout, but continues tracking the rest', () => {
+            const originalPOIs = btc.POIs
+
+            const time = Date.now()
+            const pair1 = new btc.AddressTimeoutPair('12345', time + 2000)
+            const pair2 = new btc.AddressTimeoutPair('67890', time + 4000)
+            btc.POIs = [pair1.address, pair2.address]
+            btc.PoiTimeoutPairs = [pair1, pair2]
+
+            btc.removeStaleAddresses(time)
+            expect(btc.POIs).to.eql([pair1.address, pair2.address])
+            expect(btc.PoiTimeoutPairs).to.eql([pair1, pair2])
+
+            btc.removeStaleAddresses(time + 1999)
+            expect(btc.POIs).to.eql([pair1.address, pair2.address])
+            expect(btc.PoiTimeoutPairs).to.eql([pair1, pair2])
+
+            btc.removeStaleAddresses(time + 2000)
+            expect(btc.POIs).to.eql([pair2.address])
+            expect(btc.PoiTimeoutPairs).to.eql([pair2])
+
+            btc.removeStaleAddresses(time + 3000)
+            expect(btc.POIs).to.eql([pair2.address])
+            expect(btc.PoiTimeoutPairs).to.eql([pair2])
+
+            btc.removeStaleAddresses(time + 4000)
+            expect(btc.POIs).to.empty
+            expect(btc.PoiTimeoutPairs).to.empty
+
+            btc.removeStaleAddresses(time + 4001)
+            expect(btc.POIs).to.empty
+            expect(btc.PoiTimeoutPairs).to.empty
+            
+            btc.POIs = originalPOIs
         })
     })
 })

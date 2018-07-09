@@ -15,6 +15,8 @@ const InterestingTransactionsFile = DataDir + "/interesting-txns.json"
 const InterestingTransactions = require(InterestingTransactionsFile).transactions
 const POIsFile = DataDir + "/pois.json"
 const POIs = require(POIsFile).pois
+var PoiTimeoutPairs = []
+const TimeoutMillis = 5000 // 60 * 60 * 1000
 const Params = require('webcoin-bitcoin').net
 Params.numPeers = 50
 Params.staticPeers = Relayers.reverse()
@@ -24,7 +26,6 @@ const Colors = require('colors')
 const RPC = require('../rpc')
 const ServiceChannel = 'emblem_cart'
 const PubNubService = require('pubnub')
-const Timeout = 15
 var timeouts = 0
 var mempool = []
 var receivingInventory = false
@@ -58,6 +59,7 @@ function init() {
     initInvEvents()
     spinner = UI.make_spinner("connecting to peers, looking for transactions")
     Peers.connect()
+    setInterval(removeStaleAddresses, TimeoutMillis)
 }
 
 function initInvEvents() {
@@ -208,22 +210,10 @@ function resetPeerConnection() {
     }
 }
 
-// function httpGetAsync(url, callback) {
-//     const xmlHttp = new XMLHttpRequest()
-//     xmlHttp.onreadystatechange = function () {
-//         if (xmlHttp.readyState == 4 && xmlHttp.status == 200)
-//             callback(xmlHttp.responseText)
-//     }
-//     xmlHttp.open("GET", url, true) // true for asynchronous 
-//     xmlHttp.send(null)
-// }
-
-// const request = require('request')
-
 function getHistory() {
     PubNub.history(
         {
-            channel: "emblem_cart", // ServiceChannel
+            channel: ServiceChannel,
             count: 100, // how many items to fetch
             stringifiedTimeToken: true, // false is the default
         },
@@ -253,11 +243,18 @@ function subscribe(service) {
             const publisher = message.publisher
             const payload = JSON.stringify(message.message)
             const payloadDict = extractDictFromJSON(payload)
-            if (payloadDict['txn_type'] == 'purchase') {
-                console.log("\r\nNew Message!!", payload)
-                const address = payloadDict["address"];
+            const address = payloadDict["address"]
+            if (POIs.indexOf(address) != -1) {
+                // this is bad and shouldn't happen - throw an alarm
+                publish(_service, 'WARNING', `Second Message from Address ${address}`)
+            }
+            else if (payloadDict['txn_type'] == 'purchase') {
+                console.log('\r\nNew Message!!', payload)
                 POIs.push(address)
-                console.log("\r\nUpdated Monitored Addresses:\t", POIs)
+                PoiTimeoutPairs.push(new AddressTimeoutPair(address, Date.now() + TimeoutMillis))
+                // console.log(`\r\nMonitoring Address ${address}`)
+                console.log('\r\nMonitored Addresses:\t', POIs)
+                console.log('\r\nWaiting to Timeout:\t', PoiTimeoutPairs)
                 publish(_service, 'Purchase Detected', `Monitoring Address ${address}`)
             }
         },
@@ -279,6 +276,21 @@ function subscribe(service) {
     })
 }
 
+function removeStaleAddresses(cutoffTime = Date.now()) {
+    console.log(`\r\nRemoving stale addresses. Cutoff time of ${cutoffTime}`)
+    const pairsAwaitingTimeout = []
+    for (pair in PoiTimeoutPairs) {
+        if (cutoffTime < pair.timeout) {
+            pairsAwaitingTimeout.push(pair)
+        } else {
+            POIs.splice(POIs.indexOf(pair.address), 1)
+        }
+    }
+    PoiTimeoutPairs = pairsAwaitingTimeout
+    console.log('\r\nMonitored Addresses:\t', POIs)
+    console.log('\r\nWaiting to Timeout:\t', PoiTimeoutPairs)
+}
+
 function extractDictFromJSON(payload) {
     const dict = []
     const keyValuePairs = payload.split(',').map(function (kvp) {
@@ -295,7 +307,6 @@ function extractDictFromJSON(payload) {
 }
 
 function publish(service, message, meta) {
-    console.log("THIS IS THE SERVICE CHANNEL", ServiceChannel)
     const _service = service || PubNub
     const payload = {
         message: {
@@ -323,6 +334,13 @@ function printProgress(progress, msg) {
 init()
 subscribe()
 
+class AddressTimeoutPair {
+    constructor(address, timeout) {
+        this.address = address
+        this.timeout = timeout
+    }
+}
+
 module.exports.extractDictFromJSON = extractDictFromJSON
 module.exports.addToMemPool = addToMemPool
 module.exports.colorInt = colorInt
@@ -332,9 +350,11 @@ module.exports.removePeerFromPeerList = removePeerFromPeerList
 module.exports.timeouts = timeouts
 module.exports.addPeerToRelayingPeerList = addPeerToRelayingPeerList
 module.exports.Relayers = Relayers
-module.exports.pubnub = PubNub
 module.exports.subscribe = subscribe
 module.exports.publish = publish
-module.exports.pubnub = PubNub
+module.exports.Pubnub = PubNub
 module.exports.getHistory = getHistory
-module.exports.init = init
+module.exports.removeStaleAddresses = removeStaleAddresses
+module.exports.POIs = POIs
+module.exports.PoiTimeoutPairs = PoiTimeoutPairs
+module.exports.AddressTimeoutPair = AddressTimeoutPair
