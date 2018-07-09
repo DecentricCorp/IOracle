@@ -19,6 +19,7 @@
     "bitcoin-filter": "^0.2.0",
     "bitcoin-inventory": "^1.0.2",
     "bitcoin-net": "^4.5.0",
+    "bitcoin-proof": "^2.0.0",
     "clui": "^0.3.6",
     "colors": "^1.1.2",
     "node-bitcoin-rpc": "^1.1.2",
