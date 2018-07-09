@@ -15,7 +15,7 @@ const InterestingTransactionsFile = DataDir + "/interesting-txns.json"
 const InterestingTransactions = require(InterestingTransactionsFile).transactions
 const POIsFile = DataDir + "/pois.json"
 const POIs = require(POIsFile).pois
-var PoiTimeoutPairs = []
+var AddressTimeouts = {}
 const TimeoutMillis = 5000 // 60 * 60 * 1000
 const Params = require('webcoin-bitcoin').net
 Params.numPeers = 50
@@ -59,7 +59,7 @@ function init() {
     initInvEvents()
     spinner = UI.make_spinner("connecting to peers, looking for transactions")
     Peers.connect()
-    setInterval(removeStaleAddresses, TimeoutMillis)
+    setInterval(() => POIs = removeStaleAddresses(), TimeoutMillis)
 }
 
 function initInvEvents() {
@@ -251,10 +251,10 @@ function subscribe(service) {
             else if (payloadDict['txn_type'] == 'purchase') {
                 console.log('\r\nNew Message!!', payload)
                 POIs.push(address)
-                PoiTimeoutPairs.push(new AddressTimeoutPair(address, Date.now() + TimeoutMillis))
-                // console.log(`\r\nMonitoring Address ${address}`)
-                console.log('\r\nMonitored Addresses:\t', POIs)
-                console.log('\r\nWaiting to Timeout:\t', PoiTimeoutPairs)
+                AddressTimeouts.push(new AddressTimeout(address, Date.now() + TimeoutMillis))
+                console.log(`\r\nMonitoring Address ${address}`)
+                // console.log('\r\nMonitored Addresses:\t', POIs)
+                // console.log('\r\nWaiting to Timeout:\t', AddressTimeouts)
                 publish(_service, 'Purchase Detected', `Monitoring Address ${address}`)
             }
         },
@@ -276,38 +276,12 @@ function subscribe(service) {
     })
 }
 
-function removeStaleAddresses(cutoffTime = Date.now()) {
-    console.log(`\r\nRemoving stale addresses. Cutoff time of ${cutoffTime}`)
-    const pairsAwaitingTimeout = []
-    /* for (pair in this.PoiTimeoutPairs) {
-        if (cutoffTime < pair.timeout) {
-            this.pairsAwaitingTimeout.push(pair)
-        } else {
-            this.POIs.splice(this.POIs.indexOf(pair.address), 1)
-        }
-    } */
-    function checkTimeout(pairs, index, cb){
-        var pair = pairs[index]
-        if (cutoffTime < pair.timeout) {
-            pairsAwaitingTimeout.push(pair)
-        } else {
-            POIs.splice(POIs.indexOf(pair.address), 1)
-        }
-        if (pairs.length -1 === index) {
-            return cb()
-        } else {
-            checkTimeout(pairs, index + 1, cb)
-        }
-    }
-    console.log("-------- pairs", this.PoiTimeoutPairs)
-    checkTimeout(this.PoiTimeoutPairs, 0, function(){
-        console.log("Complete")
-        this.PoiTimeoutPairs = pairsAwaitingTimeout
-        console.log('\r\nMonitored Addresses:\t', POIs)
-        console.log('\r\nWaiting to Timeout:\t', this.PoiTimeoutPairs)
-    })
-    
-    
+function removeStaleAddresses(time = Date.now()) {
+    console.log(`\r\nRemoving stale addresses as of ${time}`)
+    const staleAddresses = this.AddressTimeouts
+        .filter((timeout) => time >= timeout.time)
+        .map((timeout) => timeout.address)
+    return this.POIs.filter((address) => staleAddresses.indexOf(address) == -1)
 }
 
 function extractDictFromJSON(payload) {
@@ -353,10 +327,10 @@ function printProgress(progress, msg) {
 init()
 subscribe()
 
-class AddressTimeoutPair {
-    constructor(address, timeout) {
+class AddressTimeout {
+    constructor(address, time) {
         this.address = address
-        this.timeout = timeout
+        this.time = time
     }
 }
 
@@ -375,5 +349,5 @@ module.exports.Pubnub = PubNub
 module.exports.getHistory = getHistory
 module.exports.removeStaleAddresses = removeStaleAddresses
 module.exports.POIs = POIs
-module.exports.PoiTimeoutPairs = PoiTimeoutPairs
-module.exports.AddressTimeoutPair = AddressTimeoutPair
+module.exports.AddressTimeouts = AddressTimeouts
+module.exports.AddressTimeout = AddressTimeout

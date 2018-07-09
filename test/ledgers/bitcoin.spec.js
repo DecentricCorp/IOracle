@@ -88,40 +88,28 @@ describe('Bitcoin', () => {
         })
     })
     describe('remove stale addresses', () => {
-        it('removes monitored addresses that are ready to timeout, but continues tracking the rest', () => {
+        it('removes monitored addresses that are ready to timeout', () => {
             const originalPOIs = btc.POIs
 
             const time = Date.now()
-            const pair1 = new btc.AddressTimeoutPair('12345', time + 2000)
-            const pair2 = new btc.AddressTimeoutPair('67890', time + 4000)
+            const pair1 = new btc.AddressTimeout('12345', time + 2000)
+            const pair2 = new btc.AddressTimeout('67890', time + 4000)
             btc.POIs = [pair1.address, pair2.address]
-            btc.PoiTimeoutPairs = [pair1, pair2]
+            btc.AddressTimeouts = [pair1, pair2]
 
-            btc.removeStaleAddresses(time)
-            expect(btc.POIs).to.eql([pair1.address, pair2.address])
-            expect(btc.PoiTimeoutPairs).to.eql([pair1, pair2])
+            expect(btc.removeStaleAddresses(time)).to.eql([pair1.address, pair2.address])
 
-            btc.removeStaleAddresses(time + 1999)
-            expect(btc.POIs).to.eql([pair1.address, pair2.address])
-            expect(btc.PoiTimeoutPairs).to.eql([pair1, pair2])
+            expect(btc.removeStaleAddresses(time + 1999)).to.eql([pair1.address, pair2.address])
 
-            btc.removeStaleAddresses(time + 2000) 
-            expect(btc.POIs).to.eql([pair2.address])
-            expect(btc.PoiTimeoutPairs).to.eql([pair2]) /* this expect and the previous is about 4k ms so I'd expect this to be empty */
+            expect(btc.removeStaleAddresses(time + 2000)).to.eql([pair2.address])
 
-            /* btc.removeStaleAddresses(time + 3000)
-            expect(btc.POIs).to.eql([pair2.address])
-            expect(btc.PoiTimeoutPairs).to.eql([pair2])
+            expect(btc.removeStaleAddresses(time + 3000)).to.eql([pair2.address])
 
-            btc.removeStaleAddresses(time + 4000)
-            expect(btc.POIs).to.empty
-            expect(btc.PoiTimeoutPairs).to.empty
+            expect(btc.removeStaleAddresses(time + 4000)).to.empty
 
-            btc.removeStaleAddresses(time + 4001)
-            expect(btc.POIs).to.empty
-            expect(btc.PoiTimeoutPairs).to.empty
-            
-            btc.POIs = originalPOIs */
+            expect(btc.removeStaleAddresses(time + 4001)).to.empty
+
+            btc.POIs = originalPOIs
         })
     })
 })
