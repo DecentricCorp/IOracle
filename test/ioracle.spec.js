@@ -1,3 +1,5 @@
+const expect = require('chai').expect
+
 describe('IOracle', function(){
     describe('Should keep connecting until receiving transactions', function(){
 

@@ -4,7 +4,7 @@
   "description": "",
   "main": "ioracle.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "mocha --recursive test/**/*.spec.js",
     "start": "node ioracle.js",
     "execute": "node dynamic-api.js",
     "web": "node dynamic-api.js web",
@@ -22,11 +22,14 @@
     "bitcoin-proof": "^2.0.0",
     "clui": "^0.3.6",
     "colors": "^1.1.2",
+    "got": "^8.3.2",
     "node-bitcoin-rpc": "^1.1.2",
     "pubnub": "^4.13.0",
+    "request": "^2.87.0",
     "webcoin-bitcoin": "^3.1.4"
   },
   "devDependencies": {
+    "chai": "^4.1.2",
     "mocha": "^3.4.2"
   }
 }
