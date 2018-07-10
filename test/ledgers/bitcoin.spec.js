@@ -2,6 +2,7 @@ const expect = require('chai').expect
 const btc = require('../../ledgers/bitcoin.js')
 const PeerGroup = require('bitcoin-net').PeerGroup
 const Params = require('webcoin-bitcoin').net
+const AddressTimeout = require('../../ledgers/AddressTimeout')
 
 describe('Bitcoin', () => {
     describe('extract dict from JSON', () => {
@@ -92,18 +93,17 @@ describe('Bitcoin', () => {
             const originalPOIs = btc.POIs
 
             const time = Date.now()
-            const pair1 = new btc.AddressTimeout('12345', time + 2000)
-            const pair2 = new btc.AddressTimeout('67890', time + 4000)
-            btc.POIs = [pair1.address, pair2.address]
-            btc.AddressTimeouts = [pair1, pair2]
+            const addressTimeout1 = new AddressTimeout('12345', time + 2000)
+            const addressTimeout2 = new AddressTimeout('67890', time + 4000)
+            btc.POIs = [addressTimeout1, addressTimeout2]
 
-            expect(btc.removeStaleAddresses(time)).to.eql([pair1.address, pair2.address])
+            expect(btc.removeStaleAddresses(time)).to.eql([addressTimeout1, addressTimeout2])
 
-            expect(btc.removeStaleAddresses(time + 1999)).to.eql([pair1.address, pair2.address])
+            expect(btc.removeStaleAddresses(time + 1999)).to.eql([addressTimeout1, addressTimeout2])
 
-            expect(btc.removeStaleAddresses(time + 2000)).to.eql([pair2.address])
+            expect(btc.removeStaleAddresses(time + 2000)).to.eql([addressTimeout2])
 
-            expect(btc.removeStaleAddresses(time + 3000)).to.eql([pair2.address])
+            expect(btc.removeStaleAddresses(time + 3000)).to.eql([addressTimeout2])
 
             expect(btc.removeStaleAddresses(time + 4000)).to.empty
 
