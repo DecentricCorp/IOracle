@@ -25,17 +25,17 @@ const Bitcoin = require('bitcoinjs-lib')
 const Colors = require('colors')
 const RPC = require('../rpc')
 const ServiceChannel = 'emblem_cart'
-const PubNubService = require('pubnub')
 var timeouts = 0
 var mempool = []
 var receivingInventory = false
+const PubNubService = require('pubnub')
 const PubNub = new PubNubService({
     publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
     subscribeKey: 'sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942',
     secretKey: 'sec-c-YTI3ZTA1NjUtOGFlYi00MjQ3LWFlODUtNzU0YWFlYmRhYTdm',
     ssl: true,
     // logVerbosity: true,
-    uuid: "cv1",
+    // uuid: "cv1",
 })
 var spinner
 const PeerGroup = require('bitcoin-net').PeerGroup
@@ -43,121 +43,117 @@ const Peers = new PeerGroup(Params, ["wrtc"])
 const Filter = new BitcoinFilter(Peers)
 const Inv = Inventory(Peers)
 
+function preInit() {
+    console.log(Name, "Starting I/Oracle")
+    console.log(Name, "Verbose?", Verbose)
+    console.log(Name, "Loaded", colorInt(Relayers.length), "relaying peers")
+    console.log(Name, "Loaded", colorInt(connectedPeers.length), "general peers")
+    console.log(Name, "Loaded", colorInt(POIs.length), "addresses of interest")
+    console.log(Name, "Loaded", colorInt(InterestingTransactions.length), "interesting Transactions")
+    const reported = InterestingTransactions.filter((tx) => tx.reported)
+    console.log(Name, "          -", colorInt(reported.length), "Transactions have been reported")
+    console.log(Name, "          -", colorInt(InterestingTransactions.length - reported.length), "Transactions have not been reported")
+    console.log(Name, "Loaded", colorInt(Blocks.length), "blocks")
+}
+
 function init() {
-    initPeerEvents()
-    initInvEvents()
+    Peers.on('peer', peerOnPeer)
+    Peers.on('inv', peerOnInv)
+    Inv.on('merkleblock', (block) => console.log(Colors.red('merkleblock'), block))
+    Inv.on('tx', invOnTx)
     spinner = UI.make_spinner("connecting to peers, looking for transactions")
     Peers.connect()
     setInterval(() => POIs = removeStaleAddresses(), TimeoutMillis)
 }
 
-function preInit() {
-    console.log(Name, "Starting I/Oracle");
-    console.log(Name, "Verbose?", Verbose);
-    console.log(Name, "Loaded", colorInt(Relayers.length), "relaying peers");
-    console.log(Name, "Loaded", colorInt(connectedPeers.length), "general peers");
-    console.log(Name, "Loaded", colorInt(POIs.length), "addresses of interest");
-    console.log(Name, "Loaded", colorInt(InterestingTransactions.length), "interesting Transactions");
-    const reported = InterestingTransactions.filter(function (tx) { return tx.reported; });
-    console.log(Name, "          -", colorInt(reported.length), "Transactions have been reported");
-    console.log(Name, "          -", colorInt(InterestingTransactions.length - reported.length), "Transactions have not been reported");
-    console.log(Name, "Loaded", colorInt(Blocks.length), "blocks");
-}
-
-function initInvEvents() {
-    Inv.on('merkleblock', (block) => {
-        console.log(Colors.red('merkleblock'), block)
-    })
-    Inv.on('tx', (tx) => {
-        const txid = Reverse(tx.getHash()).toString('hex')
-        const report = { txid: txid, addresses: { out: [] }, tracked: false }
-        tx.outs.forEach(function (out, index) {
-            try {
-                const address = Bitcoin.address.fromOutputScript(out.script).toString()
-                if (Verbose) {
-                    console.log("txid", txid, "address", address)
-                }
-                else {
-                    spinner.message("txid: " + txid)
-                }
-                const tracked = POIs.filter((pair) => pair.address === address)
-                report.addresses.out[report.addresses.out.length] = { address: address, value: parseInt(out.value), tracked: tracked.length > 0 }
-                if (tracked.length > 0) { /* Flag this report as being tracked */
-                    Filter.add(new Buffer(address, 'hex'))
-                    report.tracked = true
-                    report.reported = false
-                    //console.log("---------  Tracked!!", tracked, JSON.stringify(report, null, 4))
-                }
-            }
-            catch (e) {
-                console.log(`Gracefully Failing on Error ${e.message}`)
-            }
-            if (index === tx.outs.length - 1) { /* Done looping over outputs, time to finish */
-                if (report.tracked) {
-                    InterestingTransactions[InterestingTransactions.length] = report
-                    FS.writeFile(InterestingTransactionsFile, JSON.stringify({ transactions: InterestingTransactions }, null, 4), 'utf8', function () {
-                        console.log('---------  Interesting Transaction Found!', JSON.stringify(report, null, 4))
-                    })
-                }
-            }
-        })
-    })
-}
-
-function initPeerEvents() {
-    Peers.on('peer', (peer) => {
-        timeouts = 0
-        addPeerToPeerList(peer)
-        /* DIRTY HAx0R looking for open RPC
-            try {
-                rpc.rpcCheck(peer.socket.remoteAddress)
-            } catch(err){}
-        */
-        if (Verbose) {
-            printProgress('Peer ' + connectedPeers.length + " " + peer.socket.remoteAddress)
-        }
-        peer.once('disconnect', function (err) {
-            timeouts = 0
-            removePeerFromPeerList(peer)
+const invOnTx = (tx) => {
+    const txid = Reverse(tx.getHash()).toString('hex')
+    const report = { txid: txid, addresses: { out: [] }, tracked: false }
+    const reportJSON = JSON.stringify(report, null, 4)
+    tx.outs.forEach(function (out, index) {
+        try {
+            const address = Bitcoin.address.fromOutputScript(out.script).toString()
             if (Verbose) {
-                printProgress("Disconnected from peer " + peer.socket.remoteAddress)
+                console.log("txid", txid, "address", address)
             }
-        })
-        peer.send('ping', {
-            nonce: require('crypto').pseudoRandomBytes(8)
-        }, true)
-    })
-    Peers.on('inv', (inventory, peer) => {
-        timeouts = 0
-        if (inventory[0].type === 1) {
-            addPeerToRelayingPeerList(peer)
-            if (!receivingInventory) {
-                printProgress("Receiving Transaction Inventory")
-                receivingInventory = true
+            else {
+                spinner.message("txid: " + txid)
             }
-            inventory.forEach(function (tx) {
-                Inv.get(tx.hash)
-                const txid = Reverse(tx.hash).toString('hex')
-                if (Verbose) {
-                    printProgress('Transaction Inventory', txid)
-                }
-                else {
-                    spinner.message('Transaction Inventory: ' + txid)
-                }
-                addToMemPool(txid)
-            }, this)
-        } else {
-            mempool = [] /* Reset mempool */
-            const blockHash = Reverse(inventory[0].hash).toString('hex')
-            const blockHashRecorded = Blocks.filter(function (block) { return block === blockHash })
-            if (blockHashRecorded.length < 1) {
-                Blocks[Blocks.length] = blockHash
-                FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', function () {
-                    printProgress('Block Found', blockHash)
-                })
+            const tracked = POIs.filter((pair) => pair.address === address)
+            report.addresses.out.push({ address: address, value: parseInt(out.value), tracked: tracked.length > 0 })
+            if (tracked.length > 0) {
+                Filter.add(new Buffer(address, 'hex'))
+                report.tracked = true
+                report.reported = false
+                //console.log("---------  Tracked!!", tracked, reportJSON)
+            }
+        }
+        catch (e) {
+            console.log(`Gracefully Failing from ${e.message}`)
+        }
+        if (index === tx.outs.length - 1) { /* Done looping over outputs, time to finish */
+            if (report.tracked) {
+                InterestingTransactions.push(report)
+                const txns = JSON.stringify({ transactions: InterestingTransactions }, null, 4)
+                FS.writeFile(InterestingTransactionsFile, txns, 'utf8', () => console.log('---------  Interesting Transaction Found!', reportJSON))
+                publish(reportJSON, `Interesting Transaction ${txid}`)
             }
         }
     })
+}
+
+const peerOnPeer = (peer) => {
+    timeouts = 0
+    addPeerToPeerList(peer)
+    /* DIRTY HAx0R looking for open RPC
+        try {
+            rpc.rpcCheck(peer.socket.remoteAddress)
+        } catch(err){}
+    */
+    if (Verbose) {
+        printProgress('Peer ' + connectedPeers.length + " " + peer.socket.remoteAddress)
+    }
+    peer.once('disconnect', function () {
+        timeouts = 0
+        removePeerFromPeerList(peer)
+        if (Verbose) {
+            printProgress("Disconnected from peer " + peer.socket.remoteAddress)
+        }
+    })
+    peer.send('ping', {
+        nonce: require('crypto').pseudoRandomBytes(8)
+    }, true)
+}
+
+const peerOnInv = (inventory, peer) => {
+    timeouts = 0
+    if (inventory[0].type === 1) {
+        addPeerToRelayingPeerList(peer)
+        if (!receivingInventory) {
+            printProgress("Receiving Transaction Inventory")
+            receivingInventory = true
+        }
+        inventory.forEach(function (tx) {
+            Inv.get(tx.hash)
+            const txid = Reverse(tx.hash).toString('hex')
+            if (Verbose) {
+                printProgress('Transaction Inventory', txid)
+            }
+            else {
+                spinner.message('Transaction Inventory: ' + txid)
+            }
+            addToMemPool(txid)
+        }, this)
+    }
+    else {
+        mempool = [] /* Reset mempool */
+        const blockHash = Reverse(inventory[0].hash).toString('hex')
+        const blockHashRecorded = Blocks.filter((block) => block === blockHash)
+        if (blockHashRecorded.length < 1) {
+            Blocks[Blocks.length] = blockHash
+            FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', () => printProgress('Block Found', blockHash))
+        }
+    }
 }
 
 function colorInt(count) {
@@ -165,7 +161,7 @@ function colorInt(count) {
 }
 
 function addToMemPool(txid) {
-    const found = mempool.filter(function (id) { return id === txid })
+    const found = mempool.filter((id) => id === txid)
     if (found.length > 0) {
         // console.log("====> Duplicate TXN ID: ", txid)
         return false
@@ -180,13 +176,13 @@ function addPeerToPeerList(peer) {
     const found = connectedPeers.filter(remoteAddress => remoteAddress === peer.socket.remoteAddress)
     if (found.length === 0) {
         connectedPeers.push(peer.socket.remoteAddress)
-        //fs.writeFile(AllPeersFile, JSON.stringify({peers: connectedPeers},null,4), 'utf8', function(){})
+        //fs.writeFile(AllPeersFile, JSON.stringify({peers: connectedPeers},null,4), 'utf8', () => ()))
     }
 }
 
 function addPeerToRelayingPeerList(peer) {
     const peerAddress = peer.socket.remoteAddress
-    const found = Relayers.filter(function (relayer) { return relayer === peerAddress })
+    const found = Relayers.filter((relayer) => relayer === peerAddress)
     if (found.length === 0) {
         Relayers.push(peerAddress)
         // TODO publish to a channel instead of writing to file (which doesn't currently work)
@@ -205,99 +201,80 @@ function removePeerFromPeerList(peer) {
 function resetPeerConnection() {
     if (connectedPeers.length < Params.numPeers) {
         printProgress("Connected to " + connectedPeers.length + " non-relaying peers. Trying to connect to more. ")
-        Peers.removeListener('peer', function (err) { console.log("err", err) })
-        Peers.removeListener('inv', function (err) { console.log("err", err) })
+        Peers.removeListener('peer', (err) => console.log("err", err))
+        Peers.removeListener('inv', (err) => console.log("err", err))
         spinner.stop()
         init()
     }
 }
 
-function getHistory() {
-    PubNub.history(
+function getHistory(service = PubNub) {
+    service.history(
         {
             channel: ServiceChannel,
             count: 100, // how many items to fetch
             stringifiedTimeToken: true, // false is the default
         },
-        (status, response) => {
-            console.log(`${status} ${response}`)
-        }
+        (status, response) => console.log(`${status} ${response}`)
     )
 }
 
-function subscribe(service) {
-    _service = service || PubNub
-    _service.addListener({
-        status: function (status) {
-            if (status.category === "PNConnectedCategory") {
-                publish(_service)
-            }
-            const affectedChannelGroups = status.affectedChannelGroups
-            const affectedChannels = status.affectedChannels
-            const category = status.category
-            const operation = status.operation
-            console.log("New Status!!", status)
-        },
-        message: function (message) {
-            const channelName = message.channel
-            const channelGroup = message.subscription // ...or wildcard subscription match (if exists)
-            const publishTimeToken = message.timetoken
-            const publisher = message.publisher
-            const payload = JSON.stringify(message.message)
-            const payloadDict = extractDictFromJSON(payload)
-            const address = payloadDict["address"]
-            if (POIs.filter((pair) => pair.address == address).length != 0) {
-                // this is bad and shouldn't happen - throw an alarm
-                publish(_service, 'WARNING', `Second Message from Address ${address}`)
-            }
-            else if (payloadDict['txn_type'] == 'purchase') {
-                console.log('\r\nNew Message!!', payload)
-                POIs.push(new AddressTimeout(address, Date.now() + TimeoutMillis))
-                console.log(`\r\nMonitoring Address ${address}`)
-                // console.log('\r\nMonitored Addresses:\t', POIs)
-                publish(_service, 'Purchase Detected', `Monitoring Address ${address}`)
-            }
-        },
-        presence: function (presence) {
-            const action = presence.action // can be join, leave, state-change or timeout
-            const channelName = presence.channel
-            const userCount = presence.occupancy
-            const userState = presence.state
-            const channelGroup = presence.subscription // ...or wildcard subscription match (if exists)
-            const publishTimeToken = presence.timestamp
-            const currentTimetoken = presence.timetoken
-            const userUUIDs = presence.uuid
-            console.log("New Presence!!", presence)
-        }
+function subscribe(service = PubNub) {
+    service.addListener({
+        status: (status) => subscribeStatus(status),
+        message: (message) => subscribeMessage(message),
+        presence: subscribePresence
     })
     console.log("Subscribing...")
-    _service.subscribe({
+    service.subscribe({
         channels: [ServiceChannel]
     })
 }
 
-function removeStaleAddresses(time = Date.now()) {
-    console.log(`\r\nRemoving stale addresses as of ${time}`)
-    return this.POIs.filter((timeout) => time < timeout.time)
+const subscribeStatus = function (status, service = PubNub) {
+    if (status.category === "PNConnectedCategory") {
+        publish('Status: PN Connected', 'PN Connected', service)
+    }
+    const affectedChannelGroups = status.affectedChannelGroups
+    const affectedChannels = status.affectedChannels
+    const category = status.category
+    const operation = status.operation
+    console.log("\r\nNew Status!!", status)
 }
 
-function extractDictFromJSON(payload) {
-    const dict = []
-    const keyValuePairs = payload.split(',').map(function (kvp) {
-        return kvp.split(':')
-    }).map(function (kvp) {
-        return kvp.map(function (keyOrValue) {
-            return keyOrValue.replace(/{/g, '').replace(/}/g, '').replace(/"/g, '')
-        })
-    })
-    keyValuePairs.forEach(function (kvp) {
-        dict[kvp[0]] = kvp[1]
-    })
-    return dict
+const subscribeMessage = function (message, service = PubNub) {
+    const channelName = message.channel
+    const channelGroup = message.subscription // ...or wildcard subscription match (if exists)
+    const publishTimeToken = message.timetoken
+    const publisher = message.publisher
+    const payload = JSON.stringify(message.message)
+    const payloadDict = extractDictFromJSON(payload)
+    const address = payloadDict["address"]
+    if (POIs.filter((pair) => pair.address == address).length != 0) {
+        publish('WARNING', `Additional Message from Address ${address}`, service)
+    }
+    else if (payloadDict['txn_type'] == 'purchase') {
+        console.log('\r\nNew Message!!', payload)
+        POIs.push(new AddressTimeout(address, Date.now() + TimeoutMillis))
+        console.log(`\r\nMonitoring Address ${address}`)
+        // console.log('\r\nMonitored Addresses:\t', POIs)
+        publish('Purchase Detected', `Monitoring Address ${address}`, service)
+    }
 }
 
-function publish(service, message, meta) {
-    const _service = service || PubNub
+const subscribePresence = function (presence) {
+    const action = presence.action // can be join, leave, state-change or timeout
+    const channelName = presence.channel
+    const userCount = presence.occupancy
+    const userState = presence.state
+    const channelGroup = presence.subscription // ...or wildcard subscription match (if exists)
+    const publishTimeToken = presence.timestamp
+    const currentTimetoken = presence.timetoken
+    const userUUIDs = presence.uuid
+    console.log("New Presence!!", presence)
+}
+
+function publish(message, meta, service = PubNub) {
     const payload = {
         message: {
             'body': message
@@ -309,7 +286,22 @@ function publish(service, message, meta) {
             'body': meta
         }
     }
-    _service.publish(payload, (status, response) => console.log(status, response))
+    service.publish(payload, (status, response) => console.log(status, response))
+}
+
+function removeStaleAddresses(time = Date.now()) {
+    console.log(`\r\nRemoving stale addresses as of ${time}`)
+    return this.POIs.filter((timeout) => time < timeout.time)
+}
+
+function extractDictFromJSON(payload) {
+    const dict = []
+    const keyValuePairs = payload
+        .split(',')
+        .map((kvp) => kvp.split(':'))
+        .map((kvp) => kvp.map((keyOrValue) => keyOrValue.replace(/{/g, '').replace(/}/g, '').replace(/"/g, '')))
+    keyValuePairs.forEach((kvp) => dict[kvp[0]] = kvp[1])
+    return dict
 }
 
 function printProgress(progress, msg) {
@@ -336,7 +328,11 @@ module.exports.addPeerToRelayingPeerList = addPeerToRelayingPeerList
 module.exports.Relayers = Relayers
 module.exports.subscribe = subscribe
 module.exports.publish = publish
-module.exports.Pubnub = PubNub
+module.exports.PubNub = PubNub
 module.exports.getHistory = getHistory
 module.exports.removeStaleAddresses = removeStaleAddresses
 module.exports.POIs = POIs
+module.exports.Params = Params
+module.exports.subscribeStatus = subscribeStatus
+module.exports.subscribeMessage = subscribeMessage
+module.exports.subscribePresence = subscribePresence

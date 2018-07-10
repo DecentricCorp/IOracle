@@ -51,16 +51,24 @@ describe('Bitcoin', () => {
         })
     })
     describe('reset peer connection', () => {
-
+        // Currently Unused
     })
     describe('subscribe to PubNub', () => { // TODO test actual PubNub service
-        it('subscribes to a service channel and listens for status, message, and presence events', () => {
-            const service = new MockPubNub()
-            btc.subscribe(service)
-            expect(service.subscription.channels).to.eql(['emblem_cart'])
-            // expect(service.listener.status)
-            // expect(service.listener.message)
-            // expect(service.listener.presence)
+        describe('status', () => {
+            it('publishes a message if the status category is PNConnectedCategory', () => {
+                const service = new MockPubNub()
+                expect(service.publishedMessages.length).to.equal(0)
+                btc.subscribeStatus(new MockStatus('', '', 'PNConnectedCategory', ''), service)
+                expect(service.publishedMessages.length).to.equal(1)
+                btc.subscribeStatus(new MockStatus('', '', 'OtherCategory', ''), service)
+                expect(service.publishedMessages.length).to.equal(1)
+            })
+        })
+        describe('message', () => {
+
+        })
+        describe('presence', () => {
+            // just logs to console
         })
     })
     describe('publish to PubNub', () => { // TODO test actual PubNub service
@@ -76,16 +84,14 @@ describe('Bitcoin', () => {
                     'body': 'meta'
                 }
             }
-            const service = new MockPubNub() // TODO test actual pubnub publishing w/integration test?
-            var statusAndResponse = ''
-            btc.publish(service, 'message', 'meta', (status, response) => statusAndResponse = '' + status + response)
+            const service = new MockPubNub()
+            btc.publish('message', 'meta', service)
             expect(service.publishedMessages[0]).to.eql(payload)
-            expect(statusAndResponse).to.equal('undefinedundefined')
         })
     })
     describe('get PubNub history', () => {
         it('returns the specified items from the service history', () => {
-            // expect(btc.getHistory()).to.equal('[[{"text":"hey"},{"text":"hey"},{"text":"hey2","txn_type":"purchase"},{"text":"hey2","txn_type":"purchase"},{"text":"hey"},{"text":"hey"},{"text":"Enter Message Here"},{"text":"HISTORY MESSAGE"}],"15308024924992581","15308147177087533"]')
+            expect(btc.getHistory()).to.equal('[[{"text":"hey"},{"text":"hey"},{"text":"hey2","txn_type":"purchase"},{"text":"hey2","txn_type":"purchase"},{"text":"hey"},{"text":"hey"},{"text":"Enter Message Here"},{"text":"HISTORY MESSAGE"}],"15308024924992581","15308147177087533"]')
         })
     })
     describe('remove stale addresses', () => {
