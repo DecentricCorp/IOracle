@@ -65,7 +65,18 @@ describe('Bitcoin', () => {
             })
         })
         describe('message', () => {
+            it('monitors the address and publishes to PubNub on the first message, warns on subsequent messages', () => {
+                const originalPOIs = btc.POIs
 
+                const service = new MockPubNub()
+                expect(service.publishedMessages.length).to.equal(0)
+                btc.subscribeMessage(new MockMessage('', '', '', '', JSON.stringify({ "txn_type": "purchase", "address": "12345" })), service)
+                expect(service.publishedMessages.length).to.equal(1)
+                btc.subscribeMessage(new MockMessage('', '', '', '', JSON.stringify({ "txn_type": "other", "address": "12345" })), service)
+                expect(service.publishedMessages.length).to.equal(2) // TODO check that this is a warning
+
+                btc.POIs = originalPOIs
+            })
         })
         describe('presence', () => {
             // just logs to console
@@ -92,6 +103,32 @@ describe('Bitcoin', () => {
     describe('get PubNub history', () => {
         it('returns the specified items from the service history', () => {
             expect(btc.getHistory()).to.equal('[[{"text":"hey"},{"text":"hey"},{"text":"hey2","txn_type":"purchase"},{"text":"hey2","txn_type":"purchase"},{"text":"hey"},{"text":"hey"},{"text":"Enter Message Here"},{"text":"HISTORY MESSAGE"}],"15308024924992581","15308147177087533"]')
+        })
+    })
+    describe('Inv', () => {
+        describe('Inv on Tx', () => {
+
+        })
+    })
+    describe('Peer', () => {
+        describe('Peer on Peer', () => {
+            it('adds the peer, with disconnect and ping functionality, to the list of peers', () => {
+                const startingPeers = btc.connectedPeers.slice()
+
+                const address = '123.456.789.012';
+                const peer = new MockPeer(new MockSocket(address))
+                btc.peerOnPeer(peer)
+                expect(btc.connectedPeers).to.eql(startingPeers.concat([address]))
+                expect(peer.sendCommand).to.equal('ping')
+                expect(peer.sendAssert).to.true
+                expect(peer.sendPayload.nonce.length).to.equal(8)
+                expect(peer.onceEvent).to.equal('disconnect')
+                peer.onceCB()
+                expect(btc.connectedPeers).to.eql(startingPeers)
+            })
+        })
+        describe('Peer on Inv', () => {
+
         })
     })
     describe('remove stale addresses', () => {
@@ -129,6 +166,17 @@ class MockSocket {
 class MockPeer {
     constructor(socket) {
         this.socket = socket
+    }
+
+    once(event, cb) {
+        this.onceEvent = event
+        this.onceCB = cb
+    }
+
+    send(command, payload, assert) {
+        this.sendCommand = command
+        this.sendPayload = payload
+        this.sendAssert = assert
     }
 }
 

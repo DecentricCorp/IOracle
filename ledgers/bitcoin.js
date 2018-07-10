@@ -1,5 +1,6 @@
 const Name = "bitcoin"
 const AddressTimeout = require('./AddressTimeout')
+const Crypto = require('crypto')
 const UI = require('../ui.js')
 const Verbose = process.argv[2] || false
 const Inventory = require('bitcoin-inventory')
@@ -60,13 +61,13 @@ function init() {
     Peers.on('peer', peerOnPeer)
     Peers.on('inv', peerOnInv)
     Inv.on('merkleblock', (block) => console.log(Colors.red('merkleblock'), block))
-    Inv.on('tx', invOnTx)
+    Inv.on('tx', (tx) => invOnTx(tx))
     spinner = UI.make_spinner("connecting to peers, looking for transactions")
     Peers.connect()
     setInterval(() => POIs = removeStaleAddresses(), TimeoutMillis)
 }
 
-const invOnTx = (tx) => {
+function invOnTx(tx, service = PubNub) {
     const txid = Reverse(tx.getHash()).toString('hex')
     const report = { txid: txid, addresses: { out: [] }, tracked: false }
     const reportJSON = JSON.stringify(report, null, 4)
@@ -96,13 +97,13 @@ const invOnTx = (tx) => {
                 InterestingTransactions.push(report)
                 const txns = JSON.stringify({ transactions: InterestingTransactions }, null, 4)
                 FS.writeFile(InterestingTransactionsFile, txns, 'utf8', () => console.log('---------  Interesting Transaction Found!', reportJSON))
-                publish(reportJSON, `Interesting Transaction ${txid}`)
+                publish(reportJSON, `Interesting Transaction ${txid}`, service)
             }
         }
     })
 }
 
-const peerOnPeer = (peer) => {
+function peerOnPeer(peer) {
     timeouts = 0
     addPeerToPeerList(peer)
     /* DIRTY HAx0R looking for open RPC
@@ -120,12 +121,10 @@ const peerOnPeer = (peer) => {
             printProgress("Disconnected from peer " + peer.socket.remoteAddress)
         }
     })
-    peer.send('ping', {
-        nonce: require('crypto').pseudoRandomBytes(8)
-    }, true)
+    peer.send('ping', { nonce: Crypto.pseudoRandomBytes(8) }, true)
 }
 
-const peerOnInv = (inventory, peer) => {
+function peerOnInv(inventory, peer) {
     timeouts = 0
     if (inventory[0].type === 1) {
         addPeerToRelayingPeerList(peer)
@@ -144,8 +143,7 @@ const peerOnInv = (inventory, peer) => {
             }
             addToMemPool(txid)
         }, this)
-    }
-    else {
+    } else {
         mempool = [] /* Reset mempool */
         const blockHash = Reverse(inventory[0].hash).toString('hex')
         const blockHashRecorded = Blocks.filter((block) => block === blockHash)
@@ -231,7 +229,7 @@ function subscribe(service = PubNub) {
     })
 }
 
-const subscribeStatus = function (status, service = PubNub) {
+function subscribeStatus(status, service = PubNub) {
     if (status.category === "PNConnectedCategory") {
         publish('Status: PN Connected', 'PN Connected', service)
     }
@@ -242,12 +240,13 @@ const subscribeStatus = function (status, service = PubNub) {
     console.log("\r\nNew Status!!", status)
 }
 
-const subscribeMessage = function (message, service = PubNub) {
+function subscribeMessage(message, service = PubNub) {
     const channelName = message.channel
     const channelGroup = message.subscription // ...or wildcard subscription match (if exists)
     const publishTimeToken = message.timetoken
     const publisher = message.publisher
     const payload = JSON.stringify(message.message)
+    console.log(`MESSAGE ${message.message.type} ${message.message}`) // TODO remove
     const payloadDict = extractDictFromJSON(payload)
     const address = payloadDict["address"]
     if (POIs.filter((pair) => pair.address == address).length != 0) {
@@ -262,7 +261,7 @@ const subscribeMessage = function (message, service = PubNub) {
     }
 }
 
-const subscribePresence = function (presence) {
+function subscribePresence(presence) {
     const action = presence.action // can be join, leave, state-change or timeout
     const channelName = presence.channel
     const userCount = presence.occupancy
@@ -336,3 +335,5 @@ module.exports.Params = Params
 module.exports.subscribeStatus = subscribeStatus
 module.exports.subscribeMessage = subscribeMessage
 module.exports.subscribePresence = subscribePresence
+module.exports.peerOnInv = peerOnInv
+module.exports.peerOnPeer = peerOnPeer
