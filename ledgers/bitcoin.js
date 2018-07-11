@@ -9,8 +9,8 @@ const Reverse = require("buffer-reverse")
 const DataDir = "./." + Name + "/"
 const PeersFile = DataDir + "/peers.json"
 var connectedPeers = require(PeersFile).peers
-const RelayersFile = DataDir + "/relayers.json"
-const Relayers = require(RelayersFile).peers
+const RelayPeersFile = DataDir + "/relayers.json"
+const RelayPeers = require(RelayPeersFile).peers
 const BlocksFile = DataDir + "/blocks.json"
 const Blocks = require(BlocksFile).blocks
 const InterestingTransactionsFile = DataDir + "/interesting-txns.json"
@@ -20,15 +20,14 @@ const POIsFile = DataDir + "/pois.json"
 const POIs = require(POIsFile).pois.map((poi) => new AddressTimeout(poi, Date.now() + TimeoutMillis))
 const Params = require('webcoin-bitcoin').net
 Params.numPeers = 50
-Params.staticPeers = Relayers.reverse()
+Params.staticPeers = RelayPeers.reverse()
 const FS = require('fs')
 const Bitcoin = require('bitcoinjs-lib')
 const Colors = require('colors')
 const RPC = require('../rpc')
 const ServiceChannel = 'emblem_cart'
 var timeouts = 0
-var mempool = []
-var receivingInventory = false
+var memPool = []
 const PubNubService = require('pubnub')
 const PubNub = new PubNubService({
     publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
@@ -47,7 +46,7 @@ const Inv = Inventory(Peers)
 function preInit() {
     console.log(Name, "Starting I/Oracle")
     console.log(Name, "Verbose?", Verbose)
-    console.log(Name, "Loaded", colorInt(Relayers.length), "relaying peers")
+    console.log(Name, "Loaded", colorInt(RelayPeers.length), "relaying peers")
     console.log(Name, "Loaded", colorInt(connectedPeers.length), "general peers")
     console.log(Name, "Loaded", colorInt(POIs.length), "addresses of interest")
     console.log(Name, "Loaded", colorInt(InterestingTransactions.length), "interesting Transactions")
@@ -126,14 +125,11 @@ function peerOnPeer(peer) {
 
 function peerOnInv(inventory, peer) {
     timeouts = 0
-    if (inventory[0].type === 1) {
-        addPeerToRelayingPeerList(peer)
-        if (!receivingInventory) {
-            printProgress("Receiving Transaction Inventory")
-            receivingInventory = true
-        }
+    if (inventory[0].type === 1) { // a transaction - TODO what if the inventory contains heterogenous types?
+        addPeerToRelayList(peer)
+        printProgress("Receiving Transaction Inventory")
         inventory.forEach(function (tx) {
-            Inv.get(tx.hash)
+            Inv.get(tx.hash) // TODO what does this do? figure out how to test this
             const txid = Reverse(tx.hash).toString('hex')
             if (Verbose) {
                 printProgress('Transaction Inventory', txid)
@@ -142,14 +138,13 @@ function peerOnInv(inventory, peer) {
                 spinner.message('Transaction Inventory: ' + txid)
             }
             addToMemPool(txid)
-        }, this)
+        }, this) // TODO is this necessary here?
     } else {
-        mempool = [] /* Reset mempool */
-        const blockHash = Reverse(inventory[0].hash).toString('hex')
-        const blockHashRecorded = Blocks.filter((block) => block === blockHash)
-        if (blockHashRecorded.length < 1) {
-            Blocks[Blocks.length] = blockHash
-            FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', () => printProgress('Block Found', blockHash))
+        memPool.length = 0
+        const hash = Reverse(inventory[0].hash).toString('hex')
+        if (Blocks.filter((blockHash) => blockHash === hash).length < 1) {
+            Blocks.push(hash)
+            FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', () => printProgress('Block Found', hash))
         }
     }
 }
@@ -159,13 +154,13 @@ function colorInt(count) {
 }
 
 function addToMemPool(txid) {
-    const found = mempool.filter((id) => id === txid)
+    const found = memPool.filter((id) => id === txid)
     if (found.length > 0) {
         // console.log("====> Duplicate TXN ID: ", txid)
         return false
     } else {
         console.log("Adding to mempool", txid)
-        mempool.push(txid)
+        memPool.push(txid)
         return true
     }
 }
@@ -178,11 +173,10 @@ function addPeerToPeerList(peer) {
     }
 }
 
-function addPeerToRelayingPeerList(peer) {
+function addPeerToRelayList(peer) {
     const peerAddress = peer.socket.remoteAddress
-    const found = Relayers.filter((relayer) => relayer === peerAddress)
-    if (found.length === 0) {
-        Relayers.push(peerAddress)
+    if (RelayPeers.filter((relayer) => relayer === peerAddress).length < 1) {
+        RelayPeers.push(peerAddress)
         // TODO publish to a channel instead of writing to file (which doesn't currently work)
         // FS.writeFile(RelayersFile, JSON.stringify({ peers: Relayers }, null, 4), 'utf8', function () {
         //     if (Verbose) { printProgress("Found peer " + peerAddress + " that relays transactions, Added peer to", RelayersFile) }
@@ -246,7 +240,6 @@ function subscribeMessage(message, service = PubNub) {
     const publishTimeToken = message.timetoken
     const publisher = message.publisher
     const payload = JSON.stringify(message.message)
-    console.log(`MESSAGE ${message.message.type} ${message.message}`) // TODO remove
     const payloadDict = extractDictFromJSON(payload)
     const address = payloadDict["address"]
     if (POIs.filter((pair) => pair.address == address).length != 0) {
@@ -256,7 +249,6 @@ function subscribeMessage(message, service = PubNub) {
         console.log('\r\nNew Message!!', payload)
         POIs.push(new AddressTimeout(address, Date.now() + TimeoutMillis))
         console.log(`\r\nMonitoring Address ${address}`)
-        // console.log('\r\nMonitored Addresses:\t', POIs)
         publish('Purchase Detected', `Monitoring Address ${address}`, service)
     }
 }
@@ -290,7 +282,7 @@ function publish(message, meta, service = PubNub) {
 
 function removeStaleAddresses(time = Date.now()) {
     console.log(`\r\nRemoving stale addresses as of ${time}`)
-    return this.POIs.filter((timeout) => time < timeout.time)
+    return POIs.filter((timeout) => time < timeout.time)
 }
 
 function extractDictFromJSON(payload) {
@@ -316,6 +308,27 @@ preInit()
 init()
 subscribe()
 
+// SETTERS
+
+function setTimeouts(num) {
+    timeouts = num
+}
+
+function setMempool(pool) {
+    memPool.length = 0
+    pool.forEach((address) => memPool.push(address))
+}
+
+function setPOIs(pois) {
+    POIs.length = 0
+    pois.forEach((poi) => POIs.push(poi))
+}
+
+function setRelayPeers(peers) {
+    RelayPeers.length = 0
+    peers.forEach((peer) => RelayPeers.push(peer))
+}
+
 module.exports.extractDictFromJSON = extractDictFromJSON
 module.exports.addToMemPool = addToMemPool
 module.exports.colorInt = colorInt
@@ -323,8 +336,8 @@ module.exports.addPeerToPeerList = addPeerToPeerList
 module.exports.connectedPeers = connectedPeers
 module.exports.removePeerFromPeerList = removePeerFromPeerList
 module.exports.timeouts = timeouts
-module.exports.addPeerToRelayingPeerList = addPeerToRelayingPeerList
-module.exports.Relayers = Relayers
+module.exports.addPeerToRelayList = addPeerToRelayList
+module.exports.RelayPeers = RelayPeers
 module.exports.subscribe = subscribe
 module.exports.publish = publish
 module.exports.PubNub = PubNub
@@ -337,3 +350,10 @@ module.exports.subscribeMessage = subscribeMessage
 module.exports.subscribePresence = subscribePresence
 module.exports.peerOnInv = peerOnInv
 module.exports.peerOnPeer = peerOnPeer
+module.exports.memPool = memPool
+module.exports.Blocks = Blocks
+module.exports.Inv = Inv
+module.exports.setTimeouts = setTimeouts
+module.exports.setMempool = setMempool
+module.exports.setPOIs = setPOIs
+module.exports.setRelayPeers = setRelayPeers
