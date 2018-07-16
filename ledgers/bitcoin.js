@@ -16,8 +16,8 @@ const Blocks = require(BlocksFile).blocks
 const InterestingTransactionsFile = DataDir + "/interesting-txns.json"
 const InterestingTransactions = require(InterestingTransactionsFile).transactions
 const TimeoutMillis = 60 * 60 * 1000
-const POIsFile = DataDir + "/pois.json"
-const POIs = require(POIsFile).pois.map((poi) => new AddressTimeout(poi, Date.now() + TimeoutMillis))
+const MonitoredAddressesFile = DataDir + "/pois.json"
+var monitoredAddresses = require(MonitoredAddressesFile).pois.map((poi) => new AddressTimeout(poi, Date.now() + TimeoutMillis))
 const Params = require('webcoin-bitcoin').net
 Params.numPeers = 50
 Params.staticPeers = RelayPeers.reverse()
@@ -48,7 +48,7 @@ function preInit() {
     console.log(Name, "Verbose?", Verbose)
     console.log(Name, "Loaded", colorInt(RelayPeers.length), "relaying peers")
     console.log(Name, "Loaded", colorInt(connectedPeers.length), "general peers")
-    console.log(Name, "Loaded", colorInt(POIs.length), "addresses of interest")
+    console.log(Name, "Loaded", colorInt(monitoredAddresses.length), "addresses of interest")
     console.log(Name, "Loaded", colorInt(InterestingTransactions.length), "interesting Transactions")
     const reported = InterestingTransactions.filter((tx) => tx.reported)
     console.log(Name, "          -", colorInt(reported.length), "Transactions have been reported")
@@ -63,7 +63,7 @@ function init() {
     Inv.on('tx', (tx) => invOnTx(tx))
     spinner = UI.make_spinner("connecting to peers, looking for transactions")
     Peers.connect()
-    setInterval(() => POIs = removeStaleAddresses(), TimeoutMillis)
+    setInterval(() => monitoredAddresses = removeStaleAddresses(), TimeoutMillis)
 }
 
 function invOnTx(tx, service = PubNub) {
@@ -77,9 +77,9 @@ function invOnTx(tx, service = PubNub) {
                 console.log("txid", txid, "address", address)
             }
             else {
-                spinner.message("txid: " + txid)
+                spinner.message(`txid: ${txid}`)
             }
-            const tracked = POIs.filter((pair) => pair.address === address)
+            const tracked = monitoredAddresses.filter((pair) => pair.address === address)
             report.addresses.out.push({ address: address, value: parseInt(out.value), tracked: tracked.length > 0 })
             if (tracked.length > 0) {
                 Filter.add(new Buffer(address, 'hex'))
@@ -89,7 +89,7 @@ function invOnTx(tx, service = PubNub) {
             }
         }
         catch (e) {
-            console.log(`Gracefully Failing from ${e.message}`)
+            console.log(`\r\nGraceful Failure: ${e.message}`)
         }
         if (index === tx.outs.length - 1) { /* Done looping over outputs, time to finish */
             if (report.tracked) {
@@ -111,13 +111,13 @@ function peerOnPeer(peer) {
         } catch(err){}
     */
     if (Verbose) {
-        printProgress('Peer ' + connectedPeers.length + " " + peer.socket.remoteAddress)
+        printProgress(`Peer ${connectedPeers.length} ${peer.socket.remoteAddress}`)
     }
     peer.once('disconnect', function () {
         timeouts = 0
         removePeerFromPeerList(peer)
         if (Verbose) {
-            printProgress("Disconnected from peer " + peer.socket.remoteAddress)
+            printProgress(`Disconnected from peer ${peer.socket.remoteAddress}`)
         }
     })
     peer.send('ping', { nonce: Crypto.pseudoRandomBytes(8) }, true)
@@ -135,7 +135,7 @@ function peerOnInv(inventory, peer) {
                 printProgress('Transaction Inventory', txid)
             }
             else {
-                spinner.message('Transaction Inventory: ' + txid)
+                spinner.message(`Transaction Inventory: ${txid}`)
             }
             addToMemPool(txid)
         }, this) // TODO is this necessary here?
@@ -177,6 +177,7 @@ function addPeerToRelayList(peer) {
     const peerAddress = peer.socket.remoteAddress
     if (RelayPeers.filter((relayer) => relayer === peerAddress).length < 1) {
         RelayPeers.push(peerAddress)
+        console.log(`\r\nFound Relay Peer ${peerAddress} and added peer to ${RelayPeersFile}`)
         // TODO publish to a channel instead of writing to file (which doesn't currently work)
         // FS.writeFile(RelayersFile, JSON.stringify({ peers: Relayers }, null, 4), 'utf8', function () {
         //     if (Verbose) { printProgress("Found peer " + peerAddress + " that relays transactions, Added peer to", RelayersFile) }
@@ -192,7 +193,7 @@ function removePeerFromPeerList(peer) {
 
 function resetPeerConnection() {
     if (connectedPeers.length < Params.numPeers) {
-        printProgress("Connected to " + connectedPeers.length + " non-relaying peers. Trying to connect to more. ")
+        printProgress(`Connected to ${connectedPeers.length} non-relaying peers. Trying to connect to more.`)
         Peers.removeListener('peer', (err) => console.log("err", err))
         Peers.removeListener('inv', (err) => console.log("err", err))
         spinner.stop()
@@ -231,7 +232,7 @@ function subscribeStatus(status, service = PubNub) {
     const affectedChannels = status.affectedChannels
     const category = status.category
     const operation = status.operation
-    console.log("\r\nNew Status!!", status)
+    console.log(`\r\nNew Status!!\r\n`, status)
 }
 
 function subscribeMessage(message, service = PubNub) {
@@ -242,12 +243,12 @@ function subscribeMessage(message, service = PubNub) {
     const payload = JSON.stringify(message.message)
     const payloadDict = extractDictFromJSON(payload)
     const address = payloadDict["address"]
-    if (POIs.filter((pair) => pair.address == address).length != 0) {
+    if (monitoredAddresses.filter((pair) => pair.address == address).length != 0) {
         publish('WARNING', `Additional Message from Address ${address}`, service)
     }
     else if (payloadDict['txn_type'] == 'purchase') {
         console.log('\r\nNew Message!!', payload)
-        POIs.push(new AddressTimeout(address, Date.now() + TimeoutMillis))
+        monitoredAddresses.push(new AddressTimeout(address, Date.now() + TimeoutMillis))
         console.log(`\r\nMonitoring Address ${address}`)
         publish('Purchase Detected', `Monitoring Address ${address}`, service)
     }
@@ -282,7 +283,7 @@ function publish(message, meta, service = PubNub) {
 
 function removeStaleAddresses(time = Date.now()) {
     console.log(`\r\nRemoving stale addresses as of ${time}`)
-    return POIs.filter((timeout) => time < timeout.time)
+    return monitoredAddresses.filter((timeout) => time < timeout.time)
 }
 
 function extractDictFromJSON(payload) {
@@ -303,12 +304,7 @@ function printProgress(progress, msg) {
     spinner.start()
 }
 
-/* Lets start this thing */
-preInit()
-init()
-subscribe()
-
-// SETTERS
+// SETTERS, used in testing
 
 function setTimeouts(num) {
     timeouts = num
@@ -319,15 +315,21 @@ function setMempool(pool) {
     pool.forEach((address) => memPool.push(address))
 }
 
-function setPOIs(pois) {
-    POIs.length = 0
-    pois.forEach((poi) => POIs.push(poi))
+function setMonitoredAddresses(addresses) {
+    monitoredAddresses.length = 0
+    addresses.forEach((address) => monitoredAddresses.push(address))
 }
 
 function setRelayPeers(peers) {
     RelayPeers.length = 0
     peers.forEach((peer) => RelayPeers.push(peer))
 }
+
+/* Lets start this thing */
+
+preInit()
+init()
+subscribe()
 
 module.exports.extractDictFromJSON = extractDictFromJSON
 module.exports.addToMemPool = addToMemPool
@@ -343,7 +345,7 @@ module.exports.publish = publish
 module.exports.PubNub = PubNub
 module.exports.getHistory = getHistory
 module.exports.removeStaleAddresses = removeStaleAddresses
-module.exports.POIs = POIs
+module.exports.monitoredAddresses = monitoredAddresses
 module.exports.Params = Params
 module.exports.subscribeStatus = subscribeStatus
 module.exports.subscribeMessage = subscribeMessage
@@ -355,5 +357,5 @@ module.exports.Blocks = Blocks
 module.exports.Inv = Inv
 module.exports.setTimeouts = setTimeouts
 module.exports.setMempool = setMempool
-module.exports.setPOIs = setPOIs
+module.exports.setMonitoredAddresses = setMonitoredAddresses
 module.exports.setRelayPeers = setRelayPeers

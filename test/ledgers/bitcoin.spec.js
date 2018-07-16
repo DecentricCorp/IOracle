@@ -73,7 +73,7 @@ describe('Bitcoin', () => {
         })
         describe('message', () => {
             it('monitors the address and publishes to PubNub on the first message, warns on subsequent messages', () => {
-                const originalPOIs = btc.POIs.slice()
+                const originalAddresses = btc.monitoredAddresses.slice()
                 const service = new MockPubNub()
                 expect(service.publishedMessages).to.empty
                 btc.subscribeMessage(new MockMessage('', '', '', '', { "txn_type": "purchase", "address": "12345" }), service)
@@ -82,7 +82,7 @@ describe('Bitcoin', () => {
                 expect(service.publishedMessages.length).to.equal(2)
                 expect(service.publishedMessages[1].message.body).to.equal('WARNING')
                 // cleanup
-                btc.setPOIs(originalPOIs)
+                btc.setMonitoredAddresses(originalAddresses)
             })
         })
         describe('presence', () => {
@@ -174,11 +174,11 @@ describe('Bitcoin', () => {
     })
     describe('remove stale addresses', () => {
         it('removes monitored addresses that are ready to timeout', () => {
-            const originalPOIs = btc.POIs.slice()
+            const originalAddresses = btc.monitoredAddresses.slice()
             const time = Date.now()
             const addressTimeout1 = new AddressTimeout('12345', time + 2000)
             const addressTimeout2 = new AddressTimeout('67890', time + 4000)
-            btc.setPOIs([addressTimeout1, addressTimeout2])
+            btc.setMonitoredAddresses([addressTimeout1, addressTimeout2])
             expect(btc.removeStaleAddresses(time)).to.eql([addressTimeout1, addressTimeout2])
             expect(btc.removeStaleAddresses(time + 1999)).to.eql([addressTimeout1, addressTimeout2])
             expect(btc.removeStaleAddresses(time + 2000)).to.eql([addressTimeout2])
@@ -186,7 +186,7 @@ describe('Bitcoin', () => {
             expect(btc.removeStaleAddresses(time + 4000)).to.empty
             expect(btc.removeStaleAddresses(time + 4001)).to.empty
             // cleanup
-            btc.setPOIs(originalPOIs)
+            btc.setMonitoredAddresses(originalAddresses)
         })
     })
 })
