@@ -144,7 +144,7 @@ function peerOnInv(inventory, peer) {
         const hash = Reverse(inventory[0].hash).toString('hex')
         if (Blocks.filter((blockHash) => blockHash === hash).length < 1) {
             Blocks.push(hash)
-            FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', () => printProgress('Block Found', hash))
+            FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', () => printProgress(`Block Found ${hash}`))
         }
     }
 }
@@ -247,7 +247,7 @@ function subscribeMessage(message, service = PubNub) {
         publish('WARNING', `Additional Message from Address ${address}`, service)
     }
     else if (payloadDict['txn_type'] == 'purchase') {
-        console.log('\r\nNew Message!!', payload)
+        console.log('\r\nNew Message!!\r\n', payload)
         monitoredAddresses.push(new AddressTimeout(address, Date.now() + TimeoutMillis))
         console.log(`\r\nMonitoring Address ${address}`)
         publish('Purchase Detected', `Monitoring Address ${address}`, service)
@@ -282,7 +282,7 @@ function publish(message, meta, service = PubNub) {
 }
 
 function removeStaleAddresses(time = Date.now()) {
-    console.log(`\r\nRemoving stale addresses as of ${time}`)
+    console.log(`\r\nRemoving stale addresses`)
     return monitoredAddresses.filter((timeout) => time < timeout.time)
 }
 
