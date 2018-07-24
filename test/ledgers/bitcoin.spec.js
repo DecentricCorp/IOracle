@@ -2,6 +2,7 @@ const expect = require('chai').expect
 const btc = require('../../ledgers/bitcoin.js')
 const PeerGroup = require('bitcoin-net').PeerGroup
 const Params = require('webcoin-bitcoin').net
+const AddressTimeout = require('../../ledgers/AddressTimeout')
 
 describe('Bitcoin', () => {
     describe('extract dict from JSON', () => {
@@ -14,8 +15,13 @@ describe('Bitcoin', () => {
     })
     describe('add to mempool', () => {
         it('adds an address to the mempool unless it is already present', () => {
+            expect(btc.memPool).to.empty
             expect(btc.addToMemPool('txnid')).to.true
+            expect(btc.memPool.length).to.equal(1)
             expect(btc.addToMemPool('txnid')).to.false
+            expect(btc.memPool.length).to.equal(1)
+            // cleanup
+            btc.setMempool([])
         })
     })
     describe('color int', () => {
@@ -42,27 +48,48 @@ describe('Bitcoin', () => {
     describe('add peer to relaying peer list', () => {
         it('adds the peer to the relayers if the peer is not already in the list', () => {
             const peer = new MockPeer(new MockSocket('012.345.678.910'))
-            expect(btc.Relayers).to.eql(['104.198.89.77'])
-            btc.addPeerToRelayingPeerList(peer)
-            expect(btc.Relayers).to.eql(['104.198.89.77', '012.345.678.910'])
-            btc.addPeerToRelayingPeerList(peer)
-            expect(btc.Relayers).to.eql(['104.198.89.77', '012.345.678.910'])
+            expect(btc.RelayPeers).to.eql(['104.198.89.77'])
+            btc.addPeerToRelayList(peer)
+            expect(btc.RelayPeers).to.eql(['104.198.89.77', '012.345.678.910'])
+            btc.addPeerToRelayList(peer)
+            expect(btc.RelayPeers).to.eql(['104.198.89.77', '012.345.678.910'])
+            // cleanup
+            btc.setRelayPeers(['104.198.89.77'])
         })
     })
     describe('reset peer connection', () => {
-
+        // Currently Unused
     })
-    describe('subscribe to PubNub', () => { // TODO test actual PubNub service
-        it('subscribes to a service channel and listens for status, message, and presence events', () => {
-            const service = new MockPubNub()
-            btc.subscribe(service)
-            expect(service.subscription.channels).to.eql(['emblem_cart'])
-            // expect(service.listener.status)
-            // expect(service.listener.message)
-            // expect(service.listener.presence)
+    describe('subscribe to PubNub', () => { // TODO test actual PubNub service?
+        describe('status', () => {
+            it('publishes a message if the status category is PNConnectedCategory', () => {
+                const service = new MockPubNub()
+                expect(service.publishedMessages).to.empty
+                btc.subscribeStatus(new MockStatus('', '', 'PNConnectedCategory', ''), service)
+                expect(service.publishedMessages.length).to.equal(1)
+                btc.subscribeStatus(new MockStatus('', '', 'OtherCategory', ''), service)
+                expect(service.publishedMessages.length).to.equal(1)
+            })
+        })
+        describe('message', () => {
+            it('monitors the address and publishes to PubNub on the first message, warns on subsequent messages', () => {
+                const originalAddresses = btc.monitoredAddresses.slice()
+                const service = new MockPubNub()
+                expect(service.publishedMessages).to.empty
+                btc.subscribeMessage(new MockMessage('', '', '', '', { "txn_type": "purchase", "address": "12345" }), service)
+                expect(service.publishedMessages.length).to.equal(1)
+                btc.subscribeMessage(new MockMessage('', '', '', '', { "txn_type": "other", "address": "12345" }), service)
+                expect(service.publishedMessages.length).to.equal(2)
+                expect(service.publishedMessages[1].message.body).to.equal('WARNING')
+                // cleanup
+                btc.setMonitoredAddresses(originalAddresses)
+            })
+        })
+        describe('presence', () => {
+            // just logs to console
         })
     })
-    describe('publish to PubNub', () => { // TODO test actual PubNub service
+    describe('publish to PubNub', () => { // TODO test actual PubNub service?
         it('publishes a message with the payload to the service before logging the status/response', () => {
             const payload = {
                 message: {
@@ -75,53 +102,91 @@ describe('Bitcoin', () => {
                     'body': 'meta'
                 }
             }
-            const service = new MockPubNub() // TODO test actual pubnub publishing w/integration test?
-            var statusAndResponse = ''
-            btc.publish(service, 'message', 'meta', (status, response) => statusAndResponse = '' + status + response)
-            expect(service.publishedMessages[0]).to.eql(payload)
-            expect(statusAndResponse).to.equal('undefinedundefined')
+            const service = new MockPubNub()
+            expect(service.publishedMessages).to.empty
+            btc.publish('message', 'meta', service)
+            expect(service.publishedMessages).to.eql([payload])
         })
     })
     describe('get PubNub history', () => {
         it('returns the specified items from the service history', () => {
-            // expect(btc.getHistory()).to.equal('[[{"text":"hey"},{"text":"hey"},{"text":"hey2","txn_type":"purchase"},{"text":"hey2","txn_type":"purchase"},{"text":"hey"},{"text":"hey"},{"text":"Enter Message Here"},{"text":"HISTORY MESSAGE"}],"15308024924992581","15308147177087533"]')
+            expect(btc.getHistory()).to.equal('[[{"text":"hey"},{"text":"hey"},{"text":"hey2","txn_type":"purchase"},{"text":"hey2","txn_type":"purchase"},{"text":"hey"},{"text":"hey"},{"text":"Enter Message Here"},{"text":"HISTORY MESSAGE"}],"15308024924992581","15308147177087533"]')
+        })
+    })
+    describe('Inv', () => {
+        describe('Inv on Tx', () => {
+
+        })
+    })
+    describe('Peer', () => {
+        describe('Peer on Peer', () => {
+            it('adds the peer, with disconnect and ping functionality, to the list of peers', () => {
+                const originalPeers = btc.connectedPeers.slice()
+                const address = '123.456.789.012'
+                const peer = new MockPeer(new MockSocket(address))
+                btc.peerOnPeer(peer)
+                expect(btc.connectedPeers).to.eql(originalPeers.concat([address]))
+                expect(peer.sendCommand).to.equal('ping')
+                expect(peer.sendAssert).to.true
+                expect(peer.sendPayload.nonce.length).to.equal(8)
+                expect(peer.onceEvent).to.equal('disconnect')
+                peer.onceCB()
+                expect(btc.connectedPeers).to.eql(originalPeers)
+            })
+        })
+        describe('Peer on Inv', () => {
+            it('resets timeouts, adds the peer to the relaying peers list, and adds the txn id to the mempool - provided the inv vector type is related to a txn', () => {
+                const originalRelayers = btc.RelayPeers.slice()
+                const originalInv = btc.Inv // TODO do we use this for anything?
+                const originalTimeouts = btc.timeouts
+                const address = '123.456.789.012'
+                expect(btc.memPool).to.empty
+                expect(btc.timeouts).to.equal(0)
+                btc.setTimeouts(5)
+                btc.peerOnInv([new TxnInventoryVector('hash')], new MockPeer(new MockSocket(address)))
+                expect(btc.timeouts).to.equal(0)
+                expect(btc.RelayPeers).to.eql(originalRelayers.concat([address]))
+                // get from Inv using hash
+                expect(btc.memPool).to.eql(["00000000"])
+                // cleanup
+                btc.setRelayPeers(originalRelayers)
+                btc.setMempool([])
+                btc.setTimeouts(originalTimeouts)
+            })
+            it('resets mempool and records block hash if previously unrecorded - provided the inv vector type is unrelated to a txn', () => {
+                btc.setMempool(['txnid'])
+                const peer = new MockPeer(new MockSocket(''))
+                const inventory = [new OtherInventoryVector('hash')]
+                const hash = "00000000"
+                const originalBlocks = btc.Blocks.slice()
+                btc.peerOnInv(inventory, peer)
+                expect(btc.Blocks).to.eql(originalBlocks.concat([hash]))
+                expect(btc.memPool).to.empty
+                btc.peerOnInv(inventory, peer)
+                expect(btc.Blocks).to.eql(originalBlocks.concat([hash]))
+                expect(btc.memPool).to.empty
+                // cleanup
+                btc.Blocks.pop(btc.Blocks.indexOf(hash))
+                expect(btc.Blocks).to.eql(originalBlocks)
+                btc.setMempool([])
+            })
         })
     })
     describe('remove stale addresses', () => {
-        it('removes monitored addresses that are ready to timeout, but continues tracking the rest', () => {
-            const originalPOIs = btc.POIs
-
+        it('removes monitored addresses that are ready to timeout', () => {
+            const originalAddresses = btc.monitoredAddresses.slice()
             const time = Date.now()
-            const pair1 = new btc.AddressTimeoutPair('12345', time + 2000)
-            const pair2 = new btc.AddressTimeoutPair('67890', time + 4000)
-            btc.POIs = [pair1.address, pair2.address]
-            btc.PoiTimeoutPairs = [pair1, pair2]
-
-            btc.removeStaleAddresses(time)
-            expect(btc.POIs).to.eql([pair1.address, pair2.address])
-            expect(btc.PoiTimeoutPairs).to.eql([pair1, pair2])
-
-            btc.removeStaleAddresses(time + 1999)
-            expect(btc.POIs).to.eql([pair1.address, pair2.address])
-            expect(btc.PoiTimeoutPairs).to.eql([pair1, pair2])
-
-            btc.removeStaleAddresses(time + 2000) 
-            expect(btc.POIs).to.eql([pair2.address])
-            expect(btc.PoiTimeoutPairs).to.eql([pair2]) /* this expect and the previous is about 4k ms so I'd expect this to be empty */
-
-            /* btc.removeStaleAddresses(time + 3000)
-            expect(btc.POIs).to.eql([pair2.address])
-            expect(btc.PoiTimeoutPairs).to.eql([pair2])
-
-            btc.removeStaleAddresses(time + 4000)
-            expect(btc.POIs).to.empty
-            expect(btc.PoiTimeoutPairs).to.empty
-
-            btc.removeStaleAddresses(time + 4001)
-            expect(btc.POIs).to.empty
-            expect(btc.PoiTimeoutPairs).to.empty
-            
-            btc.POIs = originalPOIs */
+            const addressTimeout1 = new AddressTimeout('12345', time + 2000)
+            const addressTimeout2 = new AddressTimeout('67890', time + 4000)
+            btc.setMonitoredAddresses([addressTimeout1, addressTimeout2])
+            expect(btc.removeStaleAddresses(time)).to.eql([addressTimeout1, addressTimeout2])
+            expect(btc.removeStaleAddresses(time + 1999)).to.eql([addressTimeout1, addressTimeout2])
+            expect(btc.removeStaleAddresses(time + 2000)).to.eql([addressTimeout2])
+            expect(btc.removeStaleAddresses(time + 3000)).to.eql([addressTimeout2])
+            expect(btc.removeStaleAddresses(time + 4000)).to.empty
+            expect(btc.removeStaleAddresses(time + 4001)).to.empty
+            // cleanup
+            btc.setMonitoredAddresses(originalAddresses)
         })
     })
 })
@@ -135,6 +200,17 @@ class MockSocket {
 class MockPeer {
     constructor(socket) {
         this.socket = socket
+    }
+
+    once(event, cb) {
+        this.onceEvent = event
+        this.onceCB = cb
+    }
+
+    send(command, payload, assert) {
+        this.sendCommand = command
+        this.sendPayload = payload
+        this.sendAssert = assert
     }
 }
 
@@ -210,5 +286,24 @@ class MockTimeoutPresence extends MockPresence {
     constructor(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs) {
         super(channelName, userCount, userState, channelGroup, publishTimeToken, currentTimetoken, userUUIDs)
         this.action = 'timeout'
+    }
+}
+
+class MockInventoryVector { // ABSTRACT
+    constructor(type, hash) {
+        this.type = type
+        this.hash = hash
+    }
+}
+
+class TxnInventoryVector extends MockInventoryVector {
+    constructor(hash) {
+        super(1, hash)
+    }
+}
+
+class OtherInventoryVector extends MockInventoryVector {
+    constructor(hash) {
+        super(0, hash)
     }
 }

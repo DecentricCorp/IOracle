@@ -1,4 +1,6 @@
 const Name = "bitcoin"
+const AddressTimeout = require('./AddressTimeout')
+const Crypto = require('crypto')
 const UI = require('../ui.js')
 const Verbose = process.argv[2] || false
 const Inventory = require('bitcoin-inventory')
@@ -7,35 +9,33 @@ const Reverse = require("buffer-reverse")
 const DataDir = __dirname + "/." + Name
 const PeersFile = DataDir + "/peers.json"
 var connectedPeers = require(PeersFile).peers
-const RelayersFile = DataDir + "/relayers.json"
-const Relayers = require(RelayersFile).peers
+const RelayPeersFile = DataDir + "/relayers.json"
+const RelayPeers = require(RelayPeersFile).peers
 const BlocksFile = DataDir + "/blocks.json"
 const Blocks = require(BlocksFile).blocks
 const InterestingTransactionsFile = DataDir + "/interesting-txns.json"
 const InterestingTransactions = require(InterestingTransactionsFile).transactions
-const POIsFile = DataDir + "/pois.json"
-const POIs = require(POIsFile).pois
-var PoiTimeoutPairs = []
-const TimeoutMillis = 5000 // 60 * 60 * 1000
+const TimeoutMillis = 60 * 60 * 1000
+const MonitoredAddressesFile = DataDir + "/pois.json"
+var monitoredAddresses = require(MonitoredAddressesFile).pois.map((poi) => new AddressTimeout(poi, Date.now() + TimeoutMillis))
 const Params = require('webcoin-bitcoin').net
 Params.numPeers = 50
-Params.staticPeers = Relayers.reverse()
+Params.staticPeers = RelayPeers.reverse()
 const FS = require('fs')
 const Bitcoin = require('bitcoinjs-lib')
 const Colors = require('colors')
 const RPC = require('../rpc')
 const ServiceChannel = 'emblem_cart'
-const PubNubService = require('pubnub')
 var timeouts = 0
-var mempool = []
-var receivingInventory = false
+var memPool = []
+const PubNubService = require('pubnub')
 const PubNub = new PubNubService({
     publishKey: 'pub-c-2ff3735b-93b6-4913-893c-eea3fe2411c0',
     subscribeKey: 'sub-c-e3f20f58-7bb1-11e8-a4a6-464114960942',
     secretKey: 'sec-c-YTI3ZTA1NjUtOGFlYi00MjQ3LWFlODUtNzU0YWFlYmRhYTdm',
     ssl: true,
     // logVerbosity: true,
-    uuid: "cv1",
+    // uuid: "cv1",
 })
 var spinner
 const PeerGroup = require('bitcoin-net').PeerGroup
@@ -43,119 +43,110 @@ const Peers = new PeerGroup(Params)
 const Filter = new BitcoinFilter(Peers)
 const Inv = Inventory(Peers)
 
-function init() {
+function preInit() {
     console.log(Name, "Starting I/Oracle")
     console.log(Name, "Verbose?", Verbose)
-    console.log(Name, "Loaded", colorInt(Relayers.length), "relaying peers")
+    console.log(Name, "Loaded", colorInt(RelayPeers.length), "relaying peers")
     console.log(Name, "Loaded", colorInt(connectedPeers.length), "general peers")
-    console.log(Name, "Loaded", colorInt(POIs.length), "addresses of interest")
+    console.log(Name, "Loaded", colorInt(monitoredAddresses.length), "addresses of interest")
     console.log(Name, "Loaded", colorInt(InterestingTransactions.length), "interesting Transactions")
-    const reported = InterestingTransactions.filter(function (tx) { return tx.reported })
+    const reported = InterestingTransactions.filter((tx) => tx.reported)
     console.log(Name, "          -", colorInt(reported.length), "Transactions have been reported")
     console.log(Name, "          -", colorInt(InterestingTransactions.length - reported.length), "Transactions have not been reported")
     console.log(Name, "Loaded", colorInt(Blocks.length), "blocks")
+}
 
-    initPeerEvents()
-    initInvEvents()
+function init() {
+    Peers.on('peer', peerOnPeer)
+    Peers.on('inv', peerOnInv)
+    Inv.on('merkleblock', (block) => console.log(Colors.red('merkleblock'), block))
+    Inv.on('tx', (tx) => invOnTx(tx))
     spinner = UI.make_spinner("connecting to peers, looking for transactions")
     Peers.connect()
-    
+    setInterval(() => monitoredAddresses = removeStaleAddresses(), TimeoutMillis)
 }
 
-function initInvEvents() {
-    Inv.on('merkleblock', (block) => {
-        console.log(Colors.red('merkleblock'), block);
-    });
-    Inv.on('tx', (tx) => {
-        const txid = Reverse(tx.getHash()).toString('hex');
-        const report = { txid: txid, addresses: { out: [] }, tracked: false };
-        tx.outs.forEach(function (out, index) {
-            try {
-                const address = Bitcoin.address.fromOutputScript(out.script).toString();
-                if (Verbose) {
-                    console.log("txid", txid, "address", address);
-                }
-                else {
-                    spinner.message("txid: " + txid);
-                }
-                const tracked = POIs.filter(function (poi) { return poi === address; });
-                report.addresses.out[report.addresses.out.length] = { address: address, value: parseInt(out.value), tracked: tracked.length > 0 };
-                if (tracked.length > 0) { /* Flag this report as being tracked */
-                    Filter.add(new Buffer(address, 'hex'));
-                    report.tracked = true;
-                    report.reported = false;
-                    //console.log("---------  Tracked!!", tracked, JSON.stringify(report, null, 4))
-                }
-            }
-            catch (e) {
-                console.log(`Gracefully Failing on Error ${e.message}`);
-            }
-            if (index === tx.outs.length - 1) { /* Done looping over outputs, time to finish */
-                if (report.tracked) {
-                    InterestingTransactions[InterestingTransactions.length] = report;
-                    FS.writeFile(InterestingTransactionsFile, JSON.stringify({ transactions: InterestingTransactions }, null, 4), 'utf8', function () {
-                        console.log('---------  Interesting Transaction Found!', JSON.stringify(report, null, 4));
-                    });
-                }
-            }
-        });
-    });
-}
-
-function initPeerEvents() {
-    Peers.on('peer', (peer) => {
-        timeouts = 0;
-        addPeerToPeerList(peer);
-        /* DIRTY HAx0R looking for open RPC
-            try {
-                rpc.rpcCheck(peer.socket.remoteAddress)
-            } catch(err){}
-        */
-        if (Verbose) {
-            printProgress('Peer ' + connectedPeers.length + " " + peer.socket.remoteAddress);
-        }
-        peer.once('disconnect', function (err) {
-            timeouts = 0;
-            removePeerFromPeerList(peer);
+function invOnTx(tx, service = PubNub) {
+    const txid = Reverse(tx.getHash()).toString('hex')
+    const report = { txid: txid, addresses: { out: [] }, tracked: false }
+    const reportJSON = JSON.stringify(report, null, 4)
+    tx.outs.forEach(function (out, index) {
+        try {
+            const address = Bitcoin.address.fromOutputScript(out.script).toString()
             if (Verbose) {
-                printProgress("Disconnected from peer " + peer.socket.remoteAddress);
+                console.log("txid", txid, "address", address)
             }
-        });
-        peer.send('ping', {
-            nonce: require('crypto').pseudoRandomBytes(8)
-        }, true);
-    })
-    Peers.on('inv', (inventory, peer) => {
-        timeouts = 0;
-        if (inventory[0].type === 1) {
-            addPeerToRelayingPeerList(peer);
-            if (!receivingInventory) {
-                printProgress("Receiving Transaction Inventory");
-                receivingInventory = true;
+            else {
+                spinner.message(`txid: ${txid}`)
             }
-            inventory.forEach(function (tx) {
-                Inv.get(tx.hash);
-                const txid = Reverse(tx.hash).toString('hex');
-                if (Verbose) {
-                    printProgress('Transaction Inventory', txid);
-                }
-                else {
-                    spinner.message('Transaction Inventory: ' + txid);
-                }
-                addToMemPool(txid);
-            }, this);
-        } else {
-            mempool = []; /* Reset mempool */
-            const blockHash = Reverse(inventory[0].hash).toString('hex');
-            const blockHashRecorded = Blocks.filter(function (block) { return block === blockHash; });
-            if (blockHashRecorded.length < 1) {
-                Blocks[Blocks.length] = blockHash;
-                FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', function () {
-                    printProgress('Block Found', blockHash);
-                });
+            const tracked = monitoredAddresses.filter((pair) => pair.address === address)
+            report.addresses.out.push({ address: address, value: parseInt(out.value), tracked: tracked.length > 0 })
+            if (tracked.length > 0) {
+                Filter.add(new Buffer(address, 'hex'))
+                report.tracked = true
+                report.reported = false
+                //console.log("---------  Tracked!!", tracked, reportJSON)
             }
         }
-    });
+        catch (e) {
+            console.log(`\r\nGraceful Failure: ${e.message}`)
+        }
+        if (index === tx.outs.length - 1) { /* Done looping over outputs, time to finish */
+            if (report.tracked) {
+                InterestingTransactions.push(report)
+                const txns = JSON.stringify({ transactions: InterestingTransactions }, null, 4)
+                FS.writeFile(InterestingTransactionsFile, txns, 'utf8', () => console.log('---------  Interesting Transaction Found!', reportJSON))
+                publish(reportJSON, `Interesting Transaction ${txid}`, service)
+            }
+        }
+    })
+}
+
+function peerOnPeer(peer) {
+    timeouts = 0
+    addPeerToPeerList(peer)
+    /* DIRTY HAx0R looking for open RPC
+        try {
+            rpc.rpcCheck(peer.socket.remoteAddress)
+        } catch(err){}
+    */
+    if (Verbose) {
+        printProgress(`Peer ${connectedPeers.length} ${peer.socket.remoteAddress}`)
+    }
+    peer.once('disconnect', function () {
+        timeouts = 0
+        removePeerFromPeerList(peer)
+        if (Verbose) {
+            printProgress(`Disconnected from peer ${peer.socket.remoteAddress}`)
+        }
+    })
+    peer.send('ping', { nonce: Crypto.pseudoRandomBytes(8) }, true)
+}
+
+function peerOnInv(inventory, peer) {
+    timeouts = 0
+    if (inventory[0].type === 1) { // a transaction - TODO what if the inventory contains heterogenous types?
+        addPeerToRelayList(peer)
+        printProgress("Receiving Transaction Inventory")
+        inventory.forEach(function (tx) {
+            Inv.get(tx.hash) // TODO what does this do? figure out how to test this
+            const txid = Reverse(tx.hash).toString('hex')
+            if (Verbose) {
+                printProgress('Transaction Inventory', txid)
+            }
+            else {
+                spinner.message(`Transaction Inventory: ${txid}`)
+            }
+            addToMemPool(txid)
+        }, this) // TODO is this necessary here?
+    } else {
+        memPool.length = 0
+        const hash = Reverse(inventory[0].hash).toString('hex')
+        if (Blocks.filter((blockHash) => blockHash === hash).length < 1) {
+            Blocks.push(hash)
+            FS.writeFile(BlocksFile, JSON.stringify({ blocks: Blocks }, null, 4), 'utf8', () => printProgress(`Block Found ${hash}`))
+        }
+    }
 }
 
 function colorInt(count) {
@@ -163,13 +154,13 @@ function colorInt(count) {
 }
 
 function addToMemPool(txid) {
-    const found = mempool.filter(function (id) { return id === txid })
+    const found = memPool.filter((id) => id === txid)
     if (found.length > 0) {
         // console.log("====> Duplicate TXN ID: ", txid)
         return false
     } else {
         console.log("Adding to mempool", txid)
-        mempool.push(txid)
+        memPool.push(txid)
         return true
     }
 }
@@ -178,16 +169,15 @@ function addPeerToPeerList(peer) {
     const found = connectedPeers.filter(remoteAddress => remoteAddress === peer.socket.remoteAddress)
     if (found.length === 0) {
         connectedPeers.push(peer.socket.remoteAddress)
-        //console.log("saving peer", peer.socket.remoteAddress, PeersFile)
-        FS.writeFile(PeersFile, JSON.stringify({peers: connectedPeers},null,4), 'utf8', function(){})
+        //fs.writeFile(AllPeersFile, JSON.stringify({peers: connectedPeers},null,4), 'utf8', () => ()))
     }
 }
 
-function addPeerToRelayingPeerList(peer) {
+function addPeerToRelayList(peer) {
     const peerAddress = peer.socket.remoteAddress
-    const found = Relayers.filter(function (relayer) { return relayer === peerAddress })
-    if (found.length === 0) {
-        Relayers.push(peerAddress)
+    if (RelayPeers.filter((relayer) => relayer === peerAddress).length < 1) {
+        RelayPeers.push(peerAddress)
+        console.log(`\r\nFound Relay Peer ${peerAddress} and added peer to ${RelayPeersFile}`)
         // TODO publish to a channel instead of writing to file (which doesn't currently work)
         // FS.writeFile(RelayersFile, JSON.stringify({ peers: Relayers }, null, 4), 'utf8', function () {
         //     if (Verbose) { printProgress("Found peer " + peerAddress + " that relays transactions, Added peer to", RelayersFile) }
@@ -203,133 +193,80 @@ function removePeerFromPeerList(peer) {
 
 function resetPeerConnection() {
     if (connectedPeers.length < Params.numPeers) {
-        printProgress("Connected to " + connectedPeers.length + " non-relaying peers. Trying to connect to more. ")
-        Peers.removeListener('peer', function (err) { console.log("err", err) })
-        Peers.removeListener('inv', function (err) { console.log("err", err) })
+        printProgress(`Connected to ${connectedPeers.length} non-relaying peers. Trying to connect to more.`)
+        Peers.removeListener('peer', (err) => console.log("err", err))
+        Peers.removeListener('inv', (err) => console.log("err", err))
         spinner.stop()
         init()
     }
 }
 
-function getHistory() {
-    PubNub.history(
+function getHistory(service = PubNub) {
+    service.history(
         {
             channel: ServiceChannel,
             count: 100, // how many items to fetch
             stringifiedTimeToken: true, // false is the default
         },
-        (status, response) => {
-            console.log(`${status} ${response}`)
-        }
+        (status, response) => console.log(`${status} ${response}`)
     )
 }
 
-function subscribe(service) {
-    _service = service || PubNub
-    _service.addListener({
-        status: function (status) {
-            if (status.category === "PNConnectedCategory") {
-                publish(_service)
-            }
-            const affectedChannelGroups = status.affectedChannelGroups
-            const affectedChannels = status.affectedChannels
-            const category = status.category
-            const operation = status.operation
-            if (Verbose) console.log("New Status!!", status)
-        },
-        message: function (message) {
-            const channelName = message.channel
-            const channelGroup = message.subscription // ...or wildcard subscription match (if exists)
-            const publishTimeToken = message.timetoken
-            const publisher = message.publisher
-            const payload = JSON.stringify(message.message)
-            const payloadDict = extractDictFromJSON(payload)
-            const address = payloadDict["address"]
-            if (POIs.indexOf(address) != -1) {
-                // this is bad and shouldn't happen - throw an alarm
-                publish(_service, 'WARNING', `Second Message from Address ${address}`)
-            }
-            else if (payloadDict['txn_type'] == 'purchase') {
-                console.log('\r\nNew Message!!', payload)
-                POIs.push(address)
-                PoiTimeoutPairs.push(new AddressTimeoutPair(address, Date.now() + TimeoutMillis))
-                // console.log(`\r\nMonitoring Address ${address}`)
-                console.log('\r\nMonitored Addresses:\t', POIs)
-                console.log('\r\nWaiting to Timeout:\t', PoiTimeoutPairs)
-                publish(_service, 'Purchase Detected', `Monitoring Address ${address}`)
-            }
-        },
-        presence: function (presence) {
-            const action = presence.action // can be join, leave, state-change or timeout
-            const channelName = presence.channel
-            const userCount = presence.occupancy
-            const userState = presence.state
-            const channelGroup = presence.subscription // ...or wildcard subscription match (if exists)
-            const publishTimeToken = presence.timestamp
-            const currentTimetoken = presence.timetoken
-            const userUUIDs = presence.uuid
-            console.log("New Presence!!", presence)
-        }
+function subscribe(service = PubNub) {
+    service.addListener({
+        status: (status) => subscribeStatus(status),
+        message: (message) => subscribeMessage(message),
+        presence: subscribePresence
     })
     console.log("Subscribing...")
-    _service.subscribe({
+    service.subscribe({
         channels: [ServiceChannel]
     })
 }
 
-function removeStaleAddresses(cutoffTime = Date.now()) {
-    if (Verbose) console.log(`\r\nRemoving stale addresses. Cutoff time of ${cutoffTime}`)
-    const pairsAwaitingTimeout = []
-    /* for (pair in this.PoiTimeoutPairs) {
-        if (cutoffTime < pair.timeout) {
-            this.pairsAwaitingTimeout.push(pair)
-        } else {
-            this.POIs.splice(this.POIs.indexOf(pair.address), 1)
-        }
-    } */
-    function checkTimeout(pairs, index, cb){
-        var pair = pairs[index]
-        if (cutoffTime < pair.timeout) {
-            pairsAwaitingTimeout.push(pair)
-        } else {
-            POIs.splice(POIs.indexOf(pair.address), 1)
-        }
-        if (pairs.length -1 === index) {
-            return cb()
-        } else {
-            checkTimeout(pairs, index + 1, cb)
-        }
+function subscribeStatus(status, service = PubNub) {
+    if (status.category === "PNConnectedCategory") {
+        publish('Status: PN Connected', 'PN Connected', service)
     }
-    if (Verbose) console.log("-------- pairs", this.PoiTimeoutPairs)
-    if (this.PoiTimeoutPairs) {
-        checkTimeout(this.PoiTimeoutPairs, 0, function(){
-            console.log("Complete")
-            this.PoiTimeoutPairs = pairsAwaitingTimeout
-            console.log('\r\nMonitored Addresses:\t', POIs)
-            console.log('\r\nWaiting to Timeout:\t', this.PoiTimeoutPairs)
-        })
-    }
-    
-    
+    const affectedChannelGroups = status.affectedChannelGroups
+    const affectedChannels = status.affectedChannels
+    const category = status.category
+    const operation = status.operation
+    console.log(`\r\nNew Status!!\r\n`, status)
 }
 
-function extractDictFromJSON(payload) {
-    const dict = []
-    const keyValuePairs = payload.split(',').map(function (kvp) {
-        return kvp.split(':')
-    }).map(function (kvp) {
-        return kvp.map(function (keyOrValue) {
-            return keyOrValue.replace(/{/g, '').replace(/}/g, '').replace(/"/g, '')
-        })
-    })
-    keyValuePairs.forEach(function (kvp) {
-        dict[kvp[0]] = kvp[1]
-    })
-    return dict
+function subscribeMessage(message, service = PubNub) {
+    const channelName = message.channel
+    const channelGroup = message.subscription // ...or wildcard subscription match (if exists)
+    const publishTimeToken = message.timetoken
+    const publisher = message.publisher
+    const payload = JSON.stringify(message.message)
+    const payloadDict = extractDictFromJSON(payload)
+    const address = payloadDict["address"]
+    if (monitoredAddresses.filter((pair) => pair.address == address).length != 0) {
+        publish('WARNING', `Additional Message from Address ${address}`, service)
+    }
+    else if (payloadDict['txn_type'] == 'purchase') {
+        console.log('\r\nNew Message!!\r\n', payload)
+        monitoredAddresses.push(new AddressTimeout(address, Date.now() + TimeoutMillis))
+        console.log(`\r\nMonitoring Address ${address}`)
+        publish('Purchase Detected', `Monitoring Address ${address}`, service)
+    }
 }
 
-function publish(service, message, meta) {
-    const _service = service || PubNub
+function subscribePresence(presence) {
+    const action = presence.action // can be join, leave, state-change or timeout
+    const channelName = presence.channel
+    const userCount = presence.occupancy
+    const userState = presence.state
+    const channelGroup = presence.subscription // ...or wildcard subscription match (if exists)
+    const publishTimeToken = presence.timestamp
+    const currentTimetoken = presence.timetoken
+    const userUUIDs = presence.uuid
+    console.log("New Presence!!", presence)
+}
+
+function publish(message, meta, service = PubNub) {
     const payload = {
         message: {
             'body': message
@@ -341,7 +278,22 @@ function publish(service, message, meta) {
             'body': meta
         }
     }
-    _service.publish(payload, (status, response) => { if(Verbose) console.log(status, response) })
+    service.publish(payload, (status, response) => console.log(status, response))
+}
+
+function removeStaleAddresses(time = Date.now()) {
+    console.log(`\r\nRemoving stale addresses`)
+    return monitoredAddresses.filter((timeout) => time < timeout.time)
+}
+
+function extractDictFromJSON(payload) {
+    const dict = []
+    const keyValuePairs = payload
+        .split(',')
+        .map((kvp) => kvp.split(':'))
+        .map((kvp) => kvp.map((keyOrValue) => keyOrValue.replace(/{/g, '').replace(/}/g, '').replace(/"/g, '')))
+    keyValuePairs.forEach((kvp) => dict[kvp[0]] = kvp[1])
+    return dict
 }
 
 function printProgress(progress, msg) {
@@ -352,18 +304,34 @@ function printProgress(progress, msg) {
     spinner.start()
 }
 
+// SETTERS, used in testing
+
+function setTimeouts(num) {
+    timeouts = num
+}
+
+function setMempool(pool) {
+    memPool.length = 0
+    pool.forEach((address) => memPool.push(address))
+}
+
+function setMonitoredAddresses(addresses) {
+    monitoredAddresses.length = 0
+    addresses.forEach((address) => monitoredAddresses.push(address))
+}
+
+function setRelayPeers(peers) {
+    RelayPeers.length = 0
+    peers.forEach((peer) => RelayPeers.push(peer))
+}
+
 /* Lets start this thing */
+
+preInit()
 init()
 setInterval(removeStaleAddresses, TimeoutMillis)
 setInterval(resetPeerConnection, TimeoutMillis)
 subscribe()
-
-class AddressTimeoutPair {
-    constructor(address, timeout) {
-        this.address = address
-        this.timeout = timeout
-    }
-}
 
 module.exports.extractDictFromJSON = extractDictFromJSON
 module.exports.addToMemPool = addToMemPool
@@ -372,13 +340,24 @@ module.exports.addPeerToPeerList = addPeerToPeerList
 module.exports.connectedPeers = connectedPeers
 module.exports.removePeerFromPeerList = removePeerFromPeerList
 module.exports.timeouts = timeouts
-module.exports.addPeerToRelayingPeerList = addPeerToRelayingPeerList
-module.exports.Relayers = Relayers
+module.exports.addPeerToRelayList = addPeerToRelayList
+module.exports.RelayPeers = RelayPeers
 module.exports.subscribe = subscribe
 module.exports.publish = publish
-module.exports.Pubnub = PubNub
+module.exports.PubNub = PubNub
 module.exports.getHistory = getHistory
 module.exports.removeStaleAddresses = removeStaleAddresses
-module.exports.POIs = POIs
-module.exports.PoiTimeoutPairs = PoiTimeoutPairs
-module.exports.AddressTimeoutPair = AddressTimeoutPair
+module.exports.monitoredAddresses = monitoredAddresses
+module.exports.Params = Params
+module.exports.subscribeStatus = subscribeStatus
+module.exports.subscribeMessage = subscribeMessage
+module.exports.subscribePresence = subscribePresence
+module.exports.peerOnInv = peerOnInv
+module.exports.peerOnPeer = peerOnPeer
+module.exports.memPool = memPool
+module.exports.Blocks = Blocks
+module.exports.Inv = Inv
+module.exports.setTimeouts = setTimeouts
+module.exports.setMempool = setMempool
+module.exports.setMonitoredAddresses = setMonitoredAddresses
+module.exports.setRelayPeers = setRelayPeers

@@ -22,7 +22,7 @@
     "colors": "^1.1.2",
     "got": "^8.3.2",
     "node-bitcoin-rpc": "^1.1.2",
-    "pubnub": "^4.13.0",
+    "pubnub": "^4.21.2",
     "request": "^2.87.0",
     "webcoin-bitcoin": "^3.1.4"
   },
