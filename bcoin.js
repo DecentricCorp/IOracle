@@ -19,19 +19,32 @@ const POIs = []
 var spinner
 
 // SPV chains only store the chain headers.
-const chain = new bcoin.Chain({
-  memory: false,
-  location: '/tmp/bcoin/spvchain',
-  spv: true
-});
 
-const pool = new bcoin.Pool({
-  chain: chain,
-  spv: true,
-  maxPeers: 8
-});
-
-const walletdb = new bcoin.wallet.WalletDB({ memory: true })
+const assert = require('assert');
+const SPVNode = bcoin.SPVNode
+const Outpoint = bcoin.Outpoint
+const node = new SPVNode({
+    config: true,
+    argv: true,
+    env: true,
+    logFile: true,
+    logConsole: true,
+    logLevel: 'debug',
+    db: 'leveldb',
+    memory: false,
+    persistent: true,
+    workers: true,
+    listen: true,
+    loader: require
+  })
+console.log('--------- Node config', node.config.bool('main'))
+if (!node.has('walletdb')) {
+    const plugin = require('bcoin/lib/wallet/plugin');
+    node.use(plugin);
+  }
+  process.on('unhandledRejection', (err, promise) => {
+    throw err;
+  });
 init()
 async function init() {
     console.log(Name, "Starting I/Oracle")
@@ -234,34 +247,19 @@ function colorInt(count) {
     return count > 0 ? Colors.green(count) : Colors.red(count)
 }
 async function startLedger(){
-  await pool.open();
-  await walletdb.open();
+    await node.ensure();
+    await node.open();
+    await node.connect();
+    node.pool.watchAddress('1BKU18EDGGyBxgEwkBxf3i6wZuhNc4Q63i');
+    node.pool.watchOutpoint(new Outpoint());
+    node.on('block', (block) => {
+    assert(block.txs.length >= 1);
+    if (block.txs.length > 1)
+        console.log(block.txs[1]);
+    })
+    node.on('tx', async (tx) => {
+        console.log('received TX', tx);
+    })
+    node.startSync()
 
-  const wallet = await walletdb.create();
-
-  console.log('Created wallet with address %s', await wallet.receiveAddress());
-
-  // Add our address to the spv filter.
-  pool.watchAddress(await wallet.receiveAddress());
-
-  // Connect, start retrieving and relaying txs
-  await pool.connect();
-
-  // Start the blockchain sync.
-  pool.startSync();
-
-  pool.on('tx', async (tx) => {
-    console.log('received TX');
-
-    await walletdb.addTX(tx);
-    console.log('Transaction added to walletDB');
-  });
-
-  wallet.on('balance', (balance) => {
-    console.log('Balance updated.');
-    console.log(bcoin.amount.btc(balance.unconfirmed));
-  });
-}/* )().catch((err) => {
-  console.error(err.stack);
-  process.exit(1);
-}); */
+}
