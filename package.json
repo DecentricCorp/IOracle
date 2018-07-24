@@ -5,20 +5,18 @@
   "main": "ioracle.js",
   "scripts": {
     "test": "mocha --recursive test/**/*.spec.js",
-    "start": "node ioracle.js",
-    "execute": "node dynamic-api.js",
-    "web": "node dynamic-api.js web",
+    "start": "node ioracle.js",    
     "info": "node ioracle.js info",
-    "pre": "mkdir ./scenarios; mkdir ./contracts; cp ./examples/contracts/Sample.sol ./contracts/Sample.sol; cp ./examples/scenarios/Sample.yaml ./scenarios/Sample.yaml",
-    "cleanup": "rm -rf ./scenarios; rm -rf ./contracts;"
+    "bcoin": "node bcoin.js"
   },
   "author": "Shannon Code (Decentric)",
   "license": "MIT",
   "dependencies": {
     "appendable-cli-menu": "^2.0.0",
+    "bcoin": "^1.0.2",
     "bitcoin-filter": "^0.2.0",
     "bitcoin-inventory": "^1.0.2",
-    "bitcoin-net": "^4.5.0",
+    "bitcoin-net": "^5.0.0",
     "bitcoin-proof": "^2.0.0",
     "clui": "^0.3.6",
     "colors": "^1.1.2",

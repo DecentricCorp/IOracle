@@ -4,7 +4,7 @@ const Verbose = process.argv[2] || false
 const Inventory = require('bitcoin-inventory')
 const BitcoinFilter = require('bitcoin-filter')
 const Reverse = require("buffer-reverse")
-const DataDir = "./." + Name + "/"
+const DataDir = __dirname + "/." + Name
 const PeersFile = DataDir + "/peers.json"
 var connectedPeers = require(PeersFile).peers
 const RelayersFile = DataDir + "/relayers.json"
@@ -39,7 +39,7 @@ const PubNub = new PubNubService({
 })
 var spinner
 const PeerGroup = require('bitcoin-net').PeerGroup
-const Peers = new PeerGroup(Params, ["wrtc"])
+const Peers = new PeerGroup(Params)
 const Filter = new BitcoinFilter(Peers)
 const Inv = Inventory(Peers)
 
@@ -59,7 +59,7 @@ function init() {
     initInvEvents()
     spinner = UI.make_spinner("connecting to peers, looking for transactions")
     Peers.connect()
-    setInterval(removeStaleAddresses, TimeoutMillis)
+    
 }
 
 function initInvEvents() {
@@ -124,7 +124,7 @@ function initPeerEvents() {
         peer.send('ping', {
             nonce: require('crypto').pseudoRandomBytes(8)
         }, true);
-    });
+    })
     Peers.on('inv', (inventory, peer) => {
         timeouts = 0;
         if (inventory[0].type === 1) {
@@ -178,7 +178,8 @@ function addPeerToPeerList(peer) {
     const found = connectedPeers.filter(remoteAddress => remoteAddress === peer.socket.remoteAddress)
     if (found.length === 0) {
         connectedPeers.push(peer.socket.remoteAddress)
-        //fs.writeFile(AllPeersFile, JSON.stringify({peers: connectedPeers},null,4), 'utf8', function(){})
+        //console.log("saving peer", peer.socket.remoteAddress, PeersFile)
+        FS.writeFile(PeersFile, JSON.stringify({peers: connectedPeers},null,4), 'utf8', function(){})
     }
 }
 
@@ -234,7 +235,7 @@ function subscribe(service) {
             const affectedChannels = status.affectedChannels
             const category = status.category
             const operation = status.operation
-            console.log("New Status!!", status)
+            if (Verbose) console.log("New Status!!", status)
         },
         message: function (message) {
             const channelName = message.channel
@@ -277,7 +278,7 @@ function subscribe(service) {
 }
 
 function removeStaleAddresses(cutoffTime = Date.now()) {
-    console.log(`\r\nRemoving stale addresses. Cutoff time of ${cutoffTime}`)
+    if (Verbose) console.log(`\r\nRemoving stale addresses. Cutoff time of ${cutoffTime}`)
     const pairsAwaitingTimeout = []
     /* for (pair in this.PoiTimeoutPairs) {
         if (cutoffTime < pair.timeout) {
@@ -299,13 +300,15 @@ function removeStaleAddresses(cutoffTime = Date.now()) {
             checkTimeout(pairs, index + 1, cb)
         }
     }
-    console.log("-------- pairs", this.PoiTimeoutPairs)
-    checkTimeout(this.PoiTimeoutPairs, 0, function(){
-        console.log("Complete")
-        this.PoiTimeoutPairs = pairsAwaitingTimeout
-        console.log('\r\nMonitored Addresses:\t', POIs)
-        console.log('\r\nWaiting to Timeout:\t', this.PoiTimeoutPairs)
-    })
+    if (Verbose) console.log("-------- pairs", this.PoiTimeoutPairs)
+    if (this.PoiTimeoutPairs) {
+        checkTimeout(this.PoiTimeoutPairs, 0, function(){
+            console.log("Complete")
+            this.PoiTimeoutPairs = pairsAwaitingTimeout
+            console.log('\r\nMonitored Addresses:\t', POIs)
+            console.log('\r\nWaiting to Timeout:\t', this.PoiTimeoutPairs)
+        })
+    }
     
     
 }
@@ -338,7 +341,7 @@ function publish(service, message, meta) {
             'body': meta
         }
     }
-    _service.publish(payload, (status, response) => console.log(status, response))
+    _service.publish(payload, (status, response) => { if(Verbose) console.log(status, response) })
 }
 
 function printProgress(progress, msg) {
@@ -351,6 +354,8 @@ function printProgress(progress, msg) {
 
 /* Lets start this thing */
 init()
+setInterval(removeStaleAddresses, TimeoutMillis)
+setInterval(resetPeerConnection, TimeoutMillis)
 subscribe()
 
 class AddressTimeoutPair {
